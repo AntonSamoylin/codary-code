@@ -5,6 +5,7 @@ ARCH=${1:-arm64}
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 export CODARY_GH_OWNER=${CODARY_GH_OWNER:-AntonSamoylin} OPENCODE_CHANNEL=prod NODE_OPTIONS=--max-old-space-size=4096
+export CODARY_TARGET_OS=darwin CODARY_TARGET_ARCH=$ARCH   # целевая платформа node-pty (важно при кросс-сборке x64 на Apple-чипе)
 ./scripts/fetch-upstream.sh
 node scripts/apply-patches.mjs
 cd upstream
