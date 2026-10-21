@@ -1,0 +1,125 @@
+name: build
+
+# Сборка Codary Code для Mac (Apple и Intel) и Windows.
+#   • вручную (Actions → build → Run workflow): собирает и кладёт установщики в «артефакты» запуска;
+#   • при публикации тега v* (или флажке release): дополнительно создаёт релиз GitHub с установщиками.
+# Подписи нет (сертификатов нет): Mac подписывается ad-hoc, Windows — без подписи.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Создать релиз GitHub (тег v<версия из version.json>)"
+        type: boolean
+        default: false
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  OPENCODE_CHANNEL: prod
+  NODE_OPTIONS: --max-old-space-size=4096
+  CODARY_GH_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: mac-arm64, os: macos-26,       flags: "--mac --arm64", bun_install: "--os=darwin --cpu=arm64" }
+          - { name: mac-x64,   os: macos-26-intel, flags: "--mac --x64",   bun_install: "--os=darwin --cpu=x64" }
+          - { name: win-x64,   os: windows-2025,   flags: "--win --x64",   bun_install: "" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Исходники OpenCode (версия из upstream.json)
+        shell: bash
+        run: ./scripts/fetch-upstream.sh
+
+      - name: Версия Bun из исходников OpenCode
+        id: bun
+        shell: bash
+        run: |
+          V=$(node -p "require('./upstream/package.json').packageManager.split('@')[1]")
+          # на Windows OpenCode использует Bun не ниже 1.4.2 (исправление peer-зависимостей)
+          if [ "$RUNNER_OS" = "Windows" ]; then V=1.4.2; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.bun.outputs.version }}
+
+      - name: Наложить брендинг Codary
+        shell: bash
+        run: node scripts/apply-patches.mjs
+
+      - name: Установить зависимости
+        shell: bash
+        working-directory: upstream
+        run: |
+          python3 -m pip install setuptools || pip install setuptools || true
+          bun install --frozen-lockfile ${{ matrix.bun_install }}
+
+      - name: Собрать интерфейс и сервер
+        shell: bash
+        working-directory: upstream/packages/desktop
+        run: |
+          bun ./scripts/prebuild.ts
+          bun run build
+
+      - name: Упаковать установщик
+        shell: bash
+        working-directory: upstream/packages/desktop
+        run: npx electron-builder ${{ matrix.flags }} --publish never --config electron-builder.config.ts
+
+      - name: Проверить результат (Mac: подпись, имя)
+        if: runner.os == 'macOS'
+        shell: bash
+        working-directory: upstream/packages/desktop
+        run: |
+          APP=$(ls -d dist/mac*/*.app | head -1)
+          echo "$APP"
+          codesign --verify --deep --strict "$APP"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleName" "$APP/Contents/Info.plist"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codary-code-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            upstream/packages/desktop/dist/codary-code-*.dmg
+            upstream/packages/desktop/dist/codary-code-*.zip
+            upstream/packages/desktop/dist/codary-code-*.exe
+            upstream/packages/desktop/dist/*.blockmap
+            upstream/packages/desktop/dist/latest.yml
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: codary-code-*
+          path: assets
+          merge-multiple: true
+      - name: Релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./version.json').version")
+          TAG="v${VERSION}"
+          ls -la assets
+          gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --title "Codary Code ${VERSION}" \
+            --notes "Сборка на основе OpenCode $(node -p "require('./upstream.json').tag"). Mac: установщик .dmg (ad-hoc подпись — первый запуск через «Открыть», см. README). Windows: .exe." \
+            || gh release upload "$TAG" assets/* --clobber --repo "$GITHUB_REPOSITORY"

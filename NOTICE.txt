@@ -1,0 +1,11 @@
+Codary Code
+Copyright (c) 2026 Codary
+
+Codary Code is a rebranded build of OpenCode (https://github.com/anomalyco/opencode),
+Copyright (c) 2025 opencode, distributed under the MIT License (see LICENSE-opencode.txt).
+
+The changes made by Codary are limited to branding (name, icons, links), disabling of
+OpenCode-hosted provider promotions and update channels, and build configuration.
+The patch set is published together with the build scripts in the Codary Code repository.
+
+"OpenCode" is a name of its respective owners and is not used to promote this product.
