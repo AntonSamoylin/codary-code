@@ -80,12 +80,12 @@ jobs:
         working-directory: upstream/packages/desktop
         run: npx electron-builder ${{ matrix.flags }} --publish never --config electron-builder.config.ts
 
-      - name: Проверить результат (Mac: подпись, имя)
+      - name: "Проверить результат (Mac, подпись и имя)"
         if: runner.os == 'macOS'
         shell: bash
         working-directory: upstream/packages/desktop
         run: |
-          APP=$(ls -d dist/mac*/*.app | head -1)
+          for APP in dist/mac*/*.app; do break; done
           echo "$APP"
           codesign --verify --deep --strict "$APP"
           /usr/libexec/PlistBuddy -c "Print :CFBundleName" "$APP/Contents/Info.plist"
