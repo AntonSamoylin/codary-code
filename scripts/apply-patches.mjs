@@ -73,6 +73,11 @@ mkdirSync(p('packages/desktop/resources/legal'), { recursive: true })
 copyFileSync(join(BRAND, 'LICENSE-opencode.txt'), p('packages/desktop/resources/legal/LICENSE-opencode.txt'))
 copyFileSync(join(ROOT, 'NOTICE.txt'), p('packages/desktop/resources/legal/NOTICE.txt'))
 
+// кросс-сборка (Windows на Linux): целевая платформа node-pty берётся из CODARY_TARGET_OS/ARCH, а не из машины, где идёт сборка
+edit('packages/desktop/electron.vite.config.ts', [
+  ['const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`', 'const nodePtyPkg = `@lydell/node-pty-${process.env.CODARY_TARGET_OS ?? process.platform}-${process.env.CODARY_TARGET_ARCH ?? process.arch}`'],
+])
+
 // ---------------------------------------------------------------- имя, окна, ссылки (main-процесс)
 edit('packages/desktop/src/main/index.ts', [
   ['  prod: "OpenCode",\n', `  prod: "${NAME}",\n`],
