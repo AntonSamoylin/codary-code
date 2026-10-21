@@ -6,7 +6,8 @@ export CODARY_GH_OWNER=${CODARY_GH_OWNER:-AntonSamoylin} OPENCODE_CHANNEL=prod N
 git config --global --add safe.directory '*'
 node -v; wine --version || true
 BUNV=1.4.2
-npm i -g "bun@${BUNV}" >/dev/null 2>&1; bun --version
+npm i -g "bun@${BUNV}" node-gyp >/dev/null 2>&1; bun --version
+python3 -m pip install setuptools >/dev/null 2>&1 || pip install setuptools >/dev/null 2>&1 || true   # node-gyp: tree-sitter-powershell собирается при установке
 ./scripts/fetch-upstream.sh
 node scripts/apply-patches.mjs
 cd upstream
