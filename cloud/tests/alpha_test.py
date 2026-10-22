@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Проверка возможностей закрытой альфы на сервере: жёсткий предел диска, лимит времени, учёт, панель администратора,
 оповещения и сводка. Использовать на сервере без живых пользователей: python3 alpha_test.py https://домен
-Временно подставляет в менеджер свои настройки (systemd drop-in) и приёмник оповещений, по окончании всё возвращает."""
+Временно подставляет в менеджер свои настройки (env-файл, по окончании возвращает) и приёмник оповещений, по окончании всё возвращает."""
 import base64, hashlib, hmac, http.cookiejar, json, os, secrets, subprocess, sys, threading, time, urllib.error, urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 BASE = sys.argv[1].rstrip('/')
 env = dict(l.split('=', 1) for l in open('/opt/codary-cloud/env').read().split('\n') if '=' in l)
 SECRET = env['CC_SECRET']
-DROPIN_DIR = '/etc/systemd/system/codary-cloud-manager.service.d'
+ENV_FILE = '/opt/codary-cloud/env'
+ORIG_ENV = open(ENV_FILE).read()
 LIMITS = '/opt/codary-cloud/limits.json'
 fails, alerts = [], []
 
@@ -49,9 +50,11 @@ def alert_with(substr, timeout=60):
     return False
 
 def set_manager_env(lines):
-    os.makedirs(DROPIN_DIR, exist_ok=True)
-    open(f'{DROPIN_DIR}/zz-test.conf', 'w').write('[Service]\n' + ''.join(f'Environment={l}\n' for l in lines))
-    sh('systemctl daemon-reload; systemctl restart codary-cloud-manager; sleep 2')
+    """Подставляет настройки в env-файл менеджера (он важнее Environment= в юните) и перезапускает его."""
+    keys = {l.split('=', 1)[0] for l in lines}
+    kept = [l for l in ORIG_ENV.split('\n') if l and l.split('=', 1)[0] not in keys]
+    open(ENV_FILE, 'w').write('\n'.join(kept + list(lines)) + '\n')
+    sh('systemctl restart codary-cloud-manager; sleep 2')
 
 def wait_ready(op, timeout=90):
     end = time.time() + timeout
@@ -75,7 +78,7 @@ try:
     size = sh("docker exec cc-u9101 sh -c \"df -m /workspace | tail -1 | awk '{print \\$2}'\"").stdout.strip()
     check('размер диска среды около 1 ГБ', size.isdigit() and 900 <= int(size) <= 1024, size)
     host_free_before = int(sh("df -m --output=avail / | tail -1").stdout.strip())
-    out = sh("docker exec cc-u9101 sh -c 'dd if=/dev/zero of=/workspace/big bs=1M count=1500 2>&1 | tail -2'").stdout
+    out = sh("docker exec cc-u9101 sh -c 'dd if=/dev/zero of=/workspace/big bs=1M count=1500 2>&1'").stdout
     check('запись сверх предела отклонена («нет места»)', 'No space left' in out, out[-150:])
     host_free_after = int(sh("df -m --output=avail / | tail -1").stdout.strip())
     check('диск сервера не пострадал (минус не больше 1,3 ГБ)', host_free_before - host_free_after < 1300, f'{host_free_before}->{host_free_after}')
@@ -112,7 +115,7 @@ try:
     check('суточная сводка отправляется', alert_with('Сводка за сутки', 70))
     check('секрет оповещений передаётся заголовком', all(a['secret'] == env['CC_ALERT_SECRET'] for a in alerts) and alerts, str(alerts[:1]))
 finally:
-    sh(f'rm -rf {DROPIN_DIR}; systemctl daemon-reload')
+    open(ENV_FILE, 'w').write(ORIG_ENV)
     if orig_limits is not None: open(LIMITS, 'w').write(orig_limits)
     sh('docker ps -aq --filter label=codary.cloud=1 | xargs -r docker rm -f; for m in /var/lib/codary-cloud/mnt/u91*; do umount -l "$m"; done; rm -f /var/lib/codary-cloud/img/u91*.img; systemctl restart codary-cloud-manager')
     srv.shutdown()
