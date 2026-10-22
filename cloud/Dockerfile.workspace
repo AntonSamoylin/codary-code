@@ -1,0 +1,27 @@
+# Облачная рабочая среда Codary Code: сервер OpenCode с нашим брендингом и плагином + встроенный веб-интерфейс одним бинарником.
+# Сборка (из корня репозитория): docker build -f cloud/Dockerfile.workspace -t codary-cloud/workspace:dev .
+FROM node:24-bookworm AS build
+RUN npm i -g bun@1.4.2 node-gyp >/dev/null 2>&1; python3 -m pip install --break-system-packages setuptools >/dev/null 2>&1 || true
+WORKDIR /src
+COPY scripts ./scripts
+COPY plugins ./plugins
+COPY brand ./brand
+COPY upstream.json version.json NOTICE.txt ./
+RUN git config --global --add safe.directory '*' && ./scripts/fetch-upstream.sh && node scripts/apply-patches.mjs
+WORKDIR /src/upstream
+RUN bun install --frozen-lockfile
+WORKDIR /src/upstream/packages/opencode
+ENV OPENCODE_CHANNEL=prod OPENCODE_VERSION=1.1.0
+RUN bun run script/build.ts --single --skip-install \
+ && mkdir -p /out && cp "$(ls -d dist/opencode-linux-x64*/bin/opencode | grep -v musl | head -1)" /out/opencode && /out/opencode --version
+
+FROM node:24-bookworm AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ripgrep jq less procps unzip python3-venv \
+ && rm -rf /var/lib/apt/lists/*
+RUN userdel -r node 2>/dev/null; useradd -m -u 1000 -s /bin/bash coder && mkdir -p /workspace && chown coder:coder /workspace
+COPY --from=build /out/opencode /usr/local/bin/opencode
+USER coder
+ENV HOME=/home/coder OPENCODE_DISABLE_AUTOUPDATE=true OPENCODE_DISABLE_SHARE=true
+WORKDIR /workspace
+EXPOSE 4096
+CMD ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096"]
