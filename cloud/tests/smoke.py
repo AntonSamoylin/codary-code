@@ -16,7 +16,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *a, **k): return None
 
 def opener(jar=None):
-    return urllib.request.build_opener(NoRedirect, urllib.request.HTTPCookieProcessor(jar or http.cookiejar.CookieJar()))
+    return urllib.request.build_opener(NoRedirect, urllib.request.HTTPCookieProcessor(jar if jar is not None else http.cookiejar.CookieJar()))
 
 def get(op, path, headers=None):
     try:
