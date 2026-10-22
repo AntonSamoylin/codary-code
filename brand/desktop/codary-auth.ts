@@ -6,7 +6,7 @@ import { createHash, randomBytes } from "node:crypto"
 import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { hostname } from "node:os"
 import { join } from "node:path"
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from "electron"
+import { app, BrowserWindow, ipcMain, safeStorage, session, shell } from "electron"
 
 import type { CodaryAuthState } from "../preload/types"
 import { write as writeLog } from "./logging"
@@ -19,7 +19,8 @@ const SITE = (process.env.CODARY_SITE_URL ?? "https://codary.ru").replace(/\/+$/
 const PROVIDER_ID = "codary"
 const FLOW_TTL = 14 * 60_000
 const POLL_MS = 2_000
-const ACCOUNT_REFRESH_MS = 5 * 60_000
+const ACCOUNT_REFRESH_MS = 60_000
+const PAY_PARTITION = "codary-pay"       // отдельное хранилище окна оплаты: без постоянных cookie, после закрытия сессия исчезает
 
 type Flow = { verifier: string; code: string; url: string; deadline: number; timer: NodeJS.Timeout; busy: boolean }
 type ServerInfo = { url: string; username: string; password: string }
@@ -30,6 +31,8 @@ let message: string | undefined
 let account: CodaryAuthState["account"]
 let server: ServerInfo | null = null
 let refreshTimer: NodeJS.Timeout | undefined
+let payWatch: NodeJS.Timeout | undefined
+let lastRefresh = 0
 
 const platformName = () => (process.platform === "darwin" ? "mac" : process.platform === "win32" ? "win" : "linux")
 const clientHeaders = () => ({ "X-Codary-Platform": platformName(), "X-Codary-Version": app.getVersion() })
@@ -102,8 +105,10 @@ function startRefreshing() {
 }
 
 /** Состояние аккаунта у шлюза: включён ли, баланс. 401 значит, что устройство отключено (в кабинете или администратором). */
-export async function refreshAccount() {
+export async function refreshAccount(force = false) {
   if (!token) return
+  if (!force && Date.now() - lastRefresh < 5_000) return
+  lastRefresh = Date.now()
   try {
     const response = await fetch(`${API}/v1/me`, { headers: { Authorization: `Bearer ${token}`, ...clientHeaders() }, signal: AbortSignal.timeout(15_000) })
     if (response.status === 401) return void (await clearLocal("Это устройство отключено. Войдите снова."))
@@ -205,6 +210,81 @@ export async function codaryLogout(): Promise<CodaryAuthState> {
   return codaryAuthSnapshot()
 }
 
+/**
+ * Пополнение баланса в окне приложения. Шлюз выдаёт подписанную ссылку на страницу оплаты сайта (ПСБ); окно открывается внутри приложения
+ * и работает на Mac и Windows одинаково. Карточные данные вводятся на странице банка, приложение их не видит.
+ */
+export async function codaryPay(amountRub: number): Promise<{ ok: boolean; error?: string }> {
+  if (!token) return { ok: false, error: "Сначала войдите в аккаунт." }
+  const amount = Math.round(Number(amountRub))
+  if (!Number.isFinite(amount) || amount < 200 || amount > 50_000) return { ok: false, error: "Сумма пополнения: от 200 до 50 000 ₽." }
+  let url: string
+  try {
+    const response = await fetch(`${API}/v1/app/pay-link`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...clientHeaders() },
+      body: JSON.stringify({ amount_rub: amount }),
+      signal: AbortSignal.timeout(15_000),
+    })
+    const data = (await response.json().catch(() => ({}))) as { url?: string; error?: { message?: string } }
+    if (!response.ok || !data.url) return { ok: false, error: data.error?.message ?? "Не удалось открыть оплату. Попробуйте позже." }
+    url = data.url
+  } catch {
+    return { ok: false, error: "Нет связи с сервером. Проверьте интернет и попробуйте ещё раз." }
+  }
+  openPayWindow(url)
+  return { ok: true }
+}
+
+function openPayWindow(url: string) {
+  const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+  // Не модальное: у модального окна на Mac (лист) нет кнопки закрытия, а оплату нужно уметь закрыть
+  const win = new BrowserWindow({
+    parent,
+    width: 540,
+    height: 780,
+    title: "Пополнение баланса — Codary Code",
+    autoHideMenuBar: true,
+    webPreferences: { partition: PAY_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false },
+  })
+  const siteOrigin = new URL(SITE).origin
+  // Страницы банка и 3-D Secure у каждого эмитента свои: разрешаем https; http — только для адреса сайта (проверочные стенды)
+  const allowed = (target: string) => {
+    try {
+      const u = new URL(target)
+      return u.protocol === "https:" || u.origin === siteOrigin
+    } catch {
+      return false
+    }
+  }
+  win.webContents.on("will-navigate", (event, target) => {
+    if (!allowed(target)) event.preventDefault()
+  })
+  win.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (/^https:/.test(target)) void shell.openExternal(target)
+    return { action: "deny" }
+  })
+  const before = account?.balanceRub
+  win.on("closed", () => {
+    void session.fromPartition(PAY_PARTITION).clearStorageData()
+    watchBalance(before)
+  })
+  void win.loadURL(url)
+  log("открыто окно оплаты")
+}
+
+/** После закрытия окна оплаты деньги приходят серверным уведомлением банка, обычно за секунды: смотрим баланс, пока он не изменится (до 2 минут). */
+function watchBalance(before: number | undefined) {
+  clearInterval(payWatch)
+  let tries = 0
+  payWatch = setInterval(async () => {
+    tries++
+    await refreshAccount(true)
+    if (tries >= 40 || (before !== undefined && account && account.balanceRub !== before)) clearInterval(payWatch)
+  }, 3_000)
+  payWatch.unref()
+}
+
 /** Ссылка codary-code://auth от страницы подтверждения: проверяем вход сразу, не дожидаясь очередного опроса. */
 export function codaryAuthPoke() {
   void poll()
@@ -224,8 +304,15 @@ export function registerCodaryAuth() {
   ipcMain.handle("codary-auth:cancel", () => codaryCancel())
   ipcMain.handle("codary-auth:logout", () => codaryLogout())
   ipcMain.handle("codary-auth:devices", () => void shell.openExternal(`${SITE}/code-login.php`))
+  ipcMain.handle("codary-auth:pay", (_event, amount: number) => codaryPay(amount))
+  ipcMain.handle("codary-auth:refresh", async () => {
+    await refreshAccount()
+    return codaryAuthSnapshot()
+  })
+  app.on("browser-window-focus", () => void refreshAccount())   // вернулись в приложение — баланс свежий
   app.once("will-quit", () => {
     clearInterval(refreshTimer)
+    clearInterval(payWatch)
     if (flow) clearInterval(flow.timer)
   })
 }

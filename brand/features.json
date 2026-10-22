@@ -1,4 +1,4 @@
 {
   "gatewayProvider": false,
-  "requireLogin": false
+  "requireLogin": true
 }

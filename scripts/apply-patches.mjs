@@ -92,6 +92,7 @@ edit('packages/desktop/src/main/constants.ts', [['app.isPackaged && CHANNEL !== 
 // сервер внутри приложения: без рекламных провайдеров OpenCode (Zen/Go), автообновления CLI и публикации сессий на opencode.ai;
 // провайдер «Codary AI-шлюз» добавляем только когда включён флаг (brand/features.json или CODARY_GATEWAY=1): шлюз пока закрыт
 const features = JSON.parse(readFileSync(join(BRAND, 'features.json'), 'utf8'))
+const loginOn = process.env.CODARY_REQUIRE_LOGIN ? process.env.CODARY_REQUIRE_LOGIN === '1' : !!features.requireLogin
 const gatewayOn = process.env.CODARY_GATEWAY ? process.env.CODARY_GATEWAY === '1' : !!features.gatewayProvider
 const GATEWAY_MODELS = ['glm-5.3', 'glm-5.3-flash', 'glm-5.3-flashx', 'glm-5', 'glm-4.7', 'glm-4.5-air']
 const inlineConfig = { disabled_providers: ['opencode', 'opencode-go'], autoupdate: false, share: 'disabled' }
@@ -109,8 +110,18 @@ console.log(`✓ провайдер шлюза Codary: ${gatewayOn ? 'ВКЛЮЧ
 edit('packages/desktop/src/main/server.ts', [[
   '    OPENCODE_CLIENT: "desktop",\n',
   '    OPENCODE_CLIENT: "desktop",\n    OPENCODE_DISABLE_AUTOUPDATE: "true",\n' +
+  '    CODARY_APP_VERSION: app.getVersion(),\n    CODARY_APP_PLATFORM: process.platform === "darwin" ? "mac" : process.platform === "win32" ? "win" : "linux",\n' +
+  `    CODARY_RESTRICT_PROVIDERS: ${loginOn ? '"1"' : '""'},\n` +
   `    OPENCODE_CONFIG_CONTENT: JSON.stringify(${JSON.stringify(inlineConfig)}),\n`,
 ]])
+
+// режим «только аккаунт Codary» (CODARY_RESTRICT_PROVIDERS=1): сервер не принимает ключи других провайдеров
+edit('packages/opencode/src/server/routes/instance/httpapi/handlers/control.ts', [
+  ['      yield* auth.set(ctx.params.providerID, ctx.payload).pipe(Effect.orDie)\n      return true',
+   '      if (process.env.CODARY_RESTRICT_PROVIDERS === "1" && ctx.params.providerID !== "codary") return false\n      yield* auth.set(ctx.params.providerID, ctx.payload).pipe(Effect.orDie)\n      return true'],
+  ['      yield* auth.remove(ctx.params.providerID).pipe(Effect.orDie)\n      return true',
+   '      if (process.env.CODARY_RESTRICT_PROVIDERS === "1" && ctx.params.providerID !== "codary") return false\n      yield* auth.remove(ctx.params.providerID).pipe(Effect.orDie)\n      return true'],
+])
 
 // встроенный плагин Codary: задачи по расписанию и управление из Telegram (plugins/codary -> packages/opencode/src/plugin/codary)
 copyDir(join(ROOT, 'plugins', 'codary'), p('packages/opencode/src/plugin/codary'))
@@ -240,7 +251,6 @@ edit('packages/app/src/pages/home/home-controller.ts', [
 // ---------------------------------------------------------------- вход в приложение через сайт (brand/desktop): аккаунт Codary и токен устройства
 // Окно входа закрывает интерфейс, пока нет аккаунта; включается флагом requireLogin (brand/features.json) или CODARY_REQUIRE_LOGIN=1 при сборке.
 {
-  const loginOn = process.env.CODARY_REQUIRE_LOGIN ? process.env.CODARY_REQUIRE_LOGIN === '1' : !!features.requireLogin
   const authSrc = readFileSync(join(BRAND, 'desktop', 'codary-auth.ts'), 'utf8')
   if (!authSrc.includes('/*REQUIRE_LOGIN*/ false')) { console.error('✗ codary-auth.ts: нет метки REQUIRE_LOGIN'); failed++ }
   writeFileSync(p('packages/desktop/src/main/codary-auth.ts'), authSrc.replace('/*REQUIRE_LOGIN*/ false', String(loginOn)))
@@ -264,6 +274,8 @@ export type ServerReadyData = {`],
     cancel: () => Promise<CodaryAuthState>
     logout: () => Promise<CodaryAuthState>
     devices: () => Promise<void>
+    pay: (amountRub: number) => Promise<{ ok: boolean; error?: string }>
+    refresh: () => Promise<CodaryAuthState>
     onChange: (cb: (state: CodaryAuthState) => void) => () => void
   }
 }`],
@@ -276,6 +288,8 @@ edit('packages/desktop/src/preload/index.ts', [
     cancel: () => ipcRenderer.invoke("codary-auth:cancel"),
     logout: () => ipcRenderer.invoke("codary-auth:logout"),
     devices: () => ipcRenderer.invoke("codary-auth:devices"),
+    pay: (amount) => ipcRenderer.invoke("codary-auth:pay", amount),
+    refresh: () => ipcRenderer.invoke("codary-auth:refresh"),
     onChange: (cb) => {
       const handler = (_: unknown, state: Parameters<typeof cb>[0]) => cb(state)
       ipcRenderer.on("codary-auth:changed", handler)
@@ -294,6 +308,84 @@ edit('packages/desktop/src/renderer/index.tsx', [
   ['import { initializationData } from "./initialization"\n', 'import { initializationData } from "./initialization"\nimport { CodaryLoginGate } from "./codary-login"\n'],
   ['            <AppInterface\n              defaultServer={key}', '            <CodaryLoginGate>\n            <AppInterface\n              defaultServer={key}'],
   ['              <Inner />\n            </AppInterface>', '              <Inner />\n            </AppInterface>\n            </CodaryLoginGate>'],
+])
+
+// ---------------------------------------------------------------- свои провайдеры отключены (приложение со входом: аккаунт Codary — единственный источник моделей)
+// Сервер и так отдаёт только провайдера codary (плагин plugins/codary/account.ts); здесь убираем из интерфейса всё, что предлагает подключить свой.
+const NO_OWN_PROVIDERS = 'Модели подключены через ваш аккаунт Codary и обновляются сами. Свои провайдеры и ключи в Codary Code подключить нельзя.'
+edit('packages/app/src/components/dialog-connect-provider.tsx', [
+  ['export const DialogConnectProvider: Component<{', 'export const DialogConnectProviderOriginal: Component<{'],
+])
+{
+  const f = p('packages/app/src/components/dialog-connect-provider.tsx')
+  writeFileSync(f, readFileSync(f, 'utf8') + `
+// Патч Codary: подключение своих провайдеров отключено, вместо окна подключения — пояснение
+export const DialogConnectProvider: Component<{
+  directory?: Accessor<string | undefined>
+  controller?: ReturnType<typeof useProviderConnectController>
+}> = () => {
+  const dialog = useDialog()
+  return (
+    <Dialog title="Codary Code">
+      <div class="flex flex-col gap-4 px-6 pb-6">
+        <div class="text-14-regular text-text-base">${NO_OWN_PROVIDERS}</div>
+        <Button onClick={() => dialog.close()}>Понятно</Button>
+      </div>
+    </Dialog>
+  )
+}
+`)
+}
+edit('packages/app/src/components/dialog-custom-provider.tsx', [
+  ['export function DialogCustomProvider(props: Props) {', 'export function DialogCustomProviderOriginal(props: Props) {'],
+])
+{
+  const f = p('packages/app/src/components/dialog-custom-provider.tsx')
+  writeFileSync(f, readFileSync(f, 'utf8') + `
+// Патч Codary: свой провайдер добавить нельзя
+export function DialogCustomProvider(props: Props) {
+  return (
+    <Dialog title="Codary Code">
+      <div class="flex flex-col gap-4 px-6 pb-6">
+        <div class="text-14-regular text-text-base">${NO_OWN_PROVIDERS}</div>
+        <Button onClick={props.onBack}>Понятно</Button>
+      </div>
+    </Dialog>
+  )
+}
+`)
+}
+edit('packages/app/src/components/settings-providers.tsx', [
+  ['export const SettingsProviders: Component<{ onBack?: () => void }> = (props) => {', 'export const SettingsProvidersOriginal: Component<{ onBack?: () => void }> = (props) => {'],
+])
+edit('packages/app/src/components/settings-v2/providers.tsx', [
+  ['export const SettingsProvidersV2: Component<{\n  directory: Accessor<string | undefined>\n  onBack?: () => void\n}> = (props) => {', 'export const SettingsProvidersV2Original: Component<{\n  directory: Accessor<string | undefined>\n  onBack?: () => void\n}> = (props) => {'],
+])
+for (const [file, name, props] of [
+  ['packages/app/src/components/settings-providers.tsx', 'SettingsProviders', '{ onBack?: () => void }'],
+  ['packages/app/src/components/settings-v2/providers.tsx', 'SettingsProvidersV2', '{ directory: Accessor<string | undefined>; onBack?: () => void }'],
+]) {
+  const f = p(file)
+  writeFileSync(f, readFileSync(f, 'utf8') + `
+// Патч Codary: вместо списка провайдеров — пояснение
+export const ${name}: Component<${props}> = () => (
+  <div class="flex flex-col gap-3 p-6">
+    <div class="text-16-medium text-text-strong">Модели Codary</div>
+    <div class="text-14-regular text-text-base">${NO_OWN_PROVIDERS}</div>
+  </div>
+)
+`)
+}
+edit('packages/app/src/pages/layout.tsx', [
+  ['      {\n        id: "provider.connect",\n        title: language.t("command.provider.connect"),\n        category: language.t("command.category.provider"),\n        onSelect: () => connectProvider(),\n      },\n', ''],
+])
+edit('packages/app/src/components/dialog-select-model.tsx', [
+  ['                <Tooltip placement="top" value={language.t("command.provider.connect")}>\n                  <IconButton\n                    icon="plus-small"\n                    variant="ghost"\n                    iconSize="normal"\n                    class="size-6"\n                    aria-label={language.t("command.provider.connect")}\n                    onClick={handleConnectProvider}\n                  />\n                </Tooltip>\n', ''],
+  ['      action={\n        <Button class="h-7 -my-1 text-14-medium" icon="plus-small" tabIndex={-1} onClick={provider}>\n          {language.t("command.provider.connect")}\n        </Button>\n      }\n', ''],
+])
+edit('packages/app/src/components/dialog-manage-models.tsx', [
+  ['      action={\n        <Button class="h-7 -my-1 text-14-medium" icon="plus-small" tabIndex={-1} onClick={handleConnectProvider}>\n          {language.t("command.provider.connect")}\n        </Button>\n      }\n', ''],
+  ['        <ButtonV2 variant="neutral" icon="plus" onClick={handleConnectProvider}>\n          {language.t("command.provider.connect")}\n        </ButtonV2>\n', ''],
 ])
 
 // ---------------------------------------------------------------- переводы: «OpenCode» -> «Codary Code» (только в словарях строк)
