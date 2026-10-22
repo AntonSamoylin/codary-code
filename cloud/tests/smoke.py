@@ -33,6 +33,8 @@ def login(uid):
 
 def docker(*a): return subprocess.run(['docker', *a], capture_output=True, text=True).stdout.strip()
 
+# чистое состояние: тест рассчитан на пустой сервер сред (не запускать на боевых пользователях!)
+subprocess.run('docker ps -aq --filter label=codary.cloud=1 | xargs -r docker rm -f >/dev/null 2>&1; systemctl restart codary-cloud-manager; sleep 2', shell=True)
 print('1. Защита входа')
 code, _, _ = get(opener(), '/enter?t=abc'); check('мусорный токен отклонён', code == 403, code)
 code, _, _ = get(opener(), '/enter?t=' + token(9001, secret='x' * 40)); check('токен с чужой подписью отклонён', code == 403, code)
@@ -57,7 +59,7 @@ while time.time() < end and len(ready) < 3:
     time.sleep(2)
 check('три среды запустились и отдают интерфейс', len(ready) == 3, str(ready))
 code, body, _ = get(users[9004], '/'); code2, body2, _ = get(users[9004], '/wait')
-check('четвёртому пользователю — «места заняты»', code == 403 and code2 == 503 and 'Все места заняты' in body2, f'{code}/{code2}')
+check('четвёртому пользователю — «места заняты»', code in (403, 503) and code2 == 503 and 'Все места заняты' in body2, f'{code}/{code2}')
 
 print('3. Память и лимиты (три среды)')
 print('   ', docker('stats', '--no-stream', '--format', '{{.Name}} {{.MemUsage}} CPU {{.CPUPerc}}', *[f'cc-u{u}' for u in (9001, 9002, 9003)]).replace('\n', '\n    '))

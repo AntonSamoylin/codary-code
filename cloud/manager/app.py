@@ -138,7 +138,8 @@ async def start_container(uid: str):
                 "run", "-d", "--name", cname(uid), "--label", "codary.cloud=1", "--label", f"codary.uid={uid}",
                 "--network", CFG["network"], "--memory", CFG["memory"], "--memory-swap", CFG["memory"], "--cpus", CFG["cpus"],
                 "--pids-limit", CFG["pids"], "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "1000:1000",
-                "--tmpfs", "/tmp:rw,size=256m", "-v", f"cc-home-{uid}:/home/coder", "-v", f"cc-ws-{uid}:/workspace",
+                "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=256m",   # exec нужен: сервер распаковывает в /tmp системную библиотеку терминала
+                 "-v", f"cc-home-{uid}:/home/coder", "-v", f"cc-ws-{uid}:/workspace",
                 "-e", f"OPENCODE_CONFIG_CONTENT={CONTAINER_CONFIG}", "--restart", "no", CFG["image"], timeout=120,
             )
             if code != 0:
