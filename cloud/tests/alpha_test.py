@@ -68,6 +68,9 @@ orig_limits = open(LIMITS).read() if os.path.exists(LIMITS) else None
 srv = HTTPServer(('127.0.0.1', 18200), Recv); threading.Thread(target=srv.serve_forever, daemon=True).start()
 try:
     sh('docker ps -aq --filter label=codary.cloud=1 | xargs -r docker rm -f; for m in /var/lib/codary-cloud/mnt/u91*; do umount -l "$m"; done; rm -f /var/lib/codary-cloud/img/u91*.img')
+    import sqlite3
+    with sqlite3.connect('/opt/codary-cloud/state.db', timeout=10) as c:   # учёт прошлых прогонов не должен съедать лимит времени
+        c.execute("DELETE FROM usage WHERE uid LIKE '91%'"); c.execute("DELETE FROM events WHERE uid LIKE '91%'")
     json.dump({'default': {'disk_gb': 5, 'daily_minutes': 480}, 'users': {'9101': {'disk_gb': 1, 'daily_minutes': 1}, '9103': {'disabled': True}}}, open(LIMITS, 'w'))
     now_h = time.gmtime().tm_hour
     set_manager_env([f'CC_ALERT_URL=http://127.0.0.1:18200/a', f'CC_ALERT_SECRET={env["CC_ALERT_SECRET"]}', 'CC_DISK_CHECK_SECONDS=15', f'CC_DIGEST_HOUR_UTC={now_h}', 'CC_WARN_AVAIL_MB=1'])
