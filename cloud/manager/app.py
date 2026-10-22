@@ -18,6 +18,7 @@ import hmac
 import html
 import json
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -326,6 +327,11 @@ async def start_container(uid: str):
     s = state[uid]
     try:
         mnt = await ensure_disk(uid)
+        # контейнер создан из старого образа (вышла новая версия среды): удаляем его, данные лежат на диске пользователя
+        have, now_img = await docker("inspect", "-f", "{{.Image}}", cname(uid)), await docker("image", "inspect", "-f", "{{.Id}}", CFG["image"])
+        if have[0] == 0 and now_img[0] == 0 and have[1].strip() != now_img[1].strip():
+            await docker("rm", "-f", cname(uid))
+            event("recreate", uid, "новый образ среды")
         code, out = await docker("start", cname(uid))
         if code != 0:   # контейнера ещё нет — создаём
             code, out = await docker(
@@ -573,6 +579,72 @@ async def wait(request: Request):
         if why == "host":
             return HTMLResponse(PAGE.format(refresh='<meta http-equiv="refresh" content="20">', title="Сервер перегружен", text="Сейчас не хватает памяти для новой среды. Страница обновится сама через несколько секунд."), status_code=503)
     return HTMLResponse(PAGE.format(refresh='<meta http-equiv="refresh" content="3">', title="Запускаем вашу среду…", text="Обычно это занимает несколько секунд. Страница обновится сама."), status_code=200)
+
+
+# ---------------------------------------------------------------- проекты в рабочей среде
+# Сервер OpenCode не умеет создавать папки, а без папки нет проекта. Поэтому окно «Открыть проект» в облаке
+# обращается сюда: /_cloud/info (где рабочая папка и проект по умолчанию) и /_cloud/mkdir (создать папку).
+# Всё выполняется внутри контейнера пользователя (docker exec от его же uid), а не с правами хоста.
+DEFAULT_PROJECT = "my-project"
+FOLDER_NAME = re.compile(r"^\w[\w .\-]{0,63}$")
+MAX_FOLDERS = 200
+
+
+def folder_ok(name: str) -> bool:
+    return bool(FOLDER_NAME.match(name)) and ".." not in name and not name.endswith((" ", "."))
+
+
+def cloud_uid(request: Request) -> str | None:
+    uid = session_uid(request)
+    return uid if uid and state.get(uid, {}).get("status") == "running" else None
+
+
+def same_origin(request: Request) -> bool:
+    origin = request.headers.get("origin")
+    return not origin or origin.split("://", 1)[-1] == request.headers.get("host", "")
+
+
+async def in_container(uid: str, script: str, *args: str) -> tuple[int, str]:
+    return await docker("exec", "-u", "1000:1000", cname(uid), "sh", "-c", script, "_", *args, timeout=20)
+
+
+@app.get("/_cloud/info")
+async def cloud_info(request: Request):
+    uid = cloud_uid(request)
+    if not uid:
+        return JSONResponse({"cloud": False}, status_code=401)
+    # проект по умолчанию создаём один раз на пользователя; если его потом удалили, не возвращаем
+    code, _ = await in_container(
+        uid,
+        f'M=/home/coder/.codary-default-project; if [ ! -e "$M" ]; then mkdir -p /workspace/{DEFAULT_PROJECT} && touch "$M"; fi; [ -d /workspace/{DEFAULT_PROJECT} ]',
+    )
+    return JSONResponse({"cloud": True, "workspace": "/workspace", "project": f"/workspace/{DEFAULT_PROJECT}" if code == 0 else None})
+
+
+@app.post("/_cloud/mkdir")
+async def cloud_mkdir(request: Request):
+    uid = cloud_uid(request)
+    if not uid:
+        return JSONResponse({"error": "auth"}, status_code=401)
+    if not same_origin(request):
+        return JSONResponse({"error": "origin"}, status_code=403)
+    try:
+        name = str((await request.json()).get("name", "")).strip()
+    except Exception:  # noqa: BLE001
+        name = ""
+    if not folder_ok(name):
+        return JSONResponse({"error": "name"}, status_code=400)
+    code, out = await in_container(
+        uid,
+        f'[ -d "/workspace/$1" ] || [ "$(ls -A /workspace | wc -l)" -lt {MAX_FOLDERS} ] || exit 3; mkdir -p -- "/workspace/$1"',
+        name,
+    )
+    if code == 3:
+        return JSONResponse({"error": "limit"}, status_code=409)
+    if code != 0:
+        event("mkdir_failed", uid, out[-200:])
+        return JSONResponse({"error": "mkdir"}, status_code=500)
+    return JSONResponse({"path": f"/workspace/{name}"})
 
 
 # ---------------------------------------------------------------- мониторинг

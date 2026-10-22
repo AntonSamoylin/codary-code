@@ -196,6 +196,47 @@ edit('packages/app/src/components/dialog-select-model-unpaid.tsx', [
   ['<div class="text-14-medium text-text-base px-2.5">{language.t("dialog.model.unpaid.freeModels.title")}</div>', '<div class="text-14-medium text-text-base px-2.5" style={{ display: model.list().length ? undefined : "none" }}>{language.t("dialog.model.unpaid.freeModels.title")}</div>'],
 ])
 
+// ---------------------------------------------------------------- облако: проект по умолчанию и создание папки
+// В облаке (cloud.codary.ru) менеджер среды отвечает на /_cloud/info и /_cloud/mkdir (cloud/manager/app.py). Вне облака этих адресов нет
+// и окно «Открыть проект» остаётся обычным. Сервер OpenCode сам папки не создаёт, поэтому без менеджера создать новый проект нельзя.
+mkdirSync(p('packages/app/src/utils'), { recursive: true })
+copyFileSync(join(BRAND, 'cloud', 'codary-cloud.ts'), p('packages/app/src/utils/codary-cloud.ts'))
+console.log('✓ packages/app/src/utils/codary-cloud.ts')
+edit('packages/app/src/components/dialog-select-directory.tsx', [
+  ['import type { Path } from "@opencode-ai/sdk/v2/client"\n', 'import type { Path } from "@opencode-ai/sdk/v2/client"\nimport { cloudFolderOk, cloudInfo, cloudMkdir } from "@/utils/codary-cloud"\nimport { showToast } from "@/utils/toast"\n'],
+  ['const RECENT_PROJECT_LIMIT = 5\n', 'const RECENT_PROJECT_LIMIT = 5\nconst GROUP_RANK: Record<string, number> = { recent: 0, folders: 1, create: 2 }\n'],
+  ['  group: "recent" | "folders"\n}', '  group: "recent" | "folders" | "create"\n  create?: boolean\n}'],
+  ['  const directories = createDirectorySearch({\n    sdk,\n    home,\n    base: start,\n  })',
+    '  // облако: список начинается с рабочей папки /workspace, а не с домашней (там только служебные .cache и .config)\n  let workspace: string | undefined\n  const [cloud] = createResource(cloudInfo)\n\n  const directories = createDirectorySearch({\n    sdk,\n    home,\n    base: () => workspace ?? start(),\n  })'],
+  ['  const items = async (value: string) => {\n    const results = await directories(value)',
+    '  const items = async (value: string) => {\n    workspace = (await cloudInfo())?.workspace\n    const results = await directories(value)'],
+  ['    return uniqueRows([...visible, ...directoryRows])\n',
+    '    const rows = uniqueRows([...visible, ...directoryRows])\n    // облако: имя, которого ещё нет, можно создать прямо здесь\n    const name = value.trim()\n    if (!workspace || !cloudFolderOk(name)) return rows\n    const taken = rows.some((row) => row.absolute.startsWith(workspace + "/") && getFilename(row.absolute).toLowerCase() === name.toLowerCase())\n    if (taken) return rows\n    return [...rows, { absolute: `${workspace}/${name}`, search: name, group: "create", create: true } as Row]\n'],
+  ['search={{ placeholder: language.t("dialog.directory.search.placeholder"), autofocus: true }}',
+    'search={{ placeholder: cloud() ? language.t("dialog.directory.search.cloud") : language.t("dialog.directory.search.placeholder"), autofocus: true }}'],
+  ['        sortGroupsBy={(a, b) => {\n          if (a.category === b.category) return 0\n          return a.category === "recent" ? -1 : 1\n        }}\n        groupHeader={(group) =>\n          group.category === "recent" ? language.t("home.recentProjects") : language.t("command.project.open")\n        }',
+    '        sortGroupsBy={(a, b) => (GROUP_RANK[a.category] ?? 1) - (GROUP_RANK[b.category] ?? 1)}\n        groupHeader={(group) =>\n          group.category === "recent"\n            ? language.t("home.recentProjects")\n            : group.category === "create"\n              ? language.t("dialog.directory.create.group")\n              : language.t("command.project.open")\n        }'],
+  ['          if (!path) return\n          resolve(path.absolute)\n',
+    '          if (!path) return\n          if (!path.create) return resolve(path.absolute)\n          void cloudMkdir(getFilename(path.absolute)).then((made) => {\n            if (made.path) return resolve(made.path)\n            showToast({\n              title: language.t("dialog.directory.create.error"),\n              description: made.error === "limit" ? language.t("dialog.directory.create.limit") : undefined,\n            })\n          })\n'],
+  ['        {(item) => {\n          const path = displayPickerPath(item.absolute, filter(), home())\n',
+    '        {(item) => {\n          if (item.create) {\n            return (\n              <div data-directory-path={item.absolute} class="w-full flex items-center gap-x-3 rounded-md">\n                <FileIcon node={{ path: item.absolute, type: "directory" }} class="shrink-0 size-4" />\n                <span class="text-14-regular text-text-strong truncate">\n                  {language.t("dialog.directory.create", { name: getFilename(item.absolute) })}\n                </span>\n              </div>\n            )\n          }\n          const path = displayPickerPath(item.absolute, filter(), home())\n'],
+])
+edit('packages/app/src/i18n/en.ts', [
+  ['  "dialog.directory.empty": "No folders found",\n',
+    '  "dialog.directory.empty": "No folders found",\n  "dialog.directory.search.cloud": "Search folders or type a name for a new one",\n  "dialog.directory.create": "Create folder “{{name}}”",\n  "dialog.directory.create.group": "New folder",\n  "dialog.directory.create.error": "Could not create the folder",\n  "dialog.directory.create.limit": "Too many folders in the workspace",\n'],
+])
+edit('packages/app/src/i18n/ru.ts', [
+  ['  "dialog.directory.empty": "Папки не найдены",\n',
+    '  "dialog.directory.empty": "Папки не найдены",\n  "dialog.directory.search.cloud": "Найдите папку или введите имя новой",\n  "dialog.directory.create": "Создать папку «{{name}}»",\n  "dialog.directory.create.group": "Новая папка",\n  "dialog.directory.create.error": "Не удалось создать папку",\n  "dialog.directory.create.limit": "В рабочей папке слишком много папок",\n'],
+])
+// проект по умолчанию: пока список проектов пуст, открываем его сами, чтобы можно было сразу начать работу
+edit('packages/app/src/pages/home/home-controller.ts', [
+  ['import { createEffect, createMemo } from "solid-js"\n', 'import { cloudInfo } from "@/utils/codary-cloud"\nimport { createEffect, createMemo } from "solid-js"\n'],
+  ['  return {\n    selection: {\n      value: selection,', '  const controller = {\n    selection: {\n      value: selection,'],
+  ['      openProjectNewSession,\n    },\n  }\n}\n\nexport type HomeController',
+    '      openProjectNewSession,\n    },\n  }\n\n  void cloudInfo().then((info) => {\n    const conn = focusedServer()\n    if (!info?.project || !conn || projects().length > 0) return\n    try {\n      if (localStorage.getItem("codary.cloud.default-project")) return\n      localStorage.setItem("codary.cloud.default-project", "1")\n    } catch {}\n    controller.project.add(conn, [info.project])\n  })\n\n  return controller\n}\n\nexport type HomeController'],
+])
+
 // ---------------------------------------------------------------- переводы: «OpenCode» -> «Codary Code» (только в словарях строк)
 {
   const dirs = ['packages/app/src/i18n', 'packages/ui/src/i18n', 'packages/desktop/src/renderer/i18n']
