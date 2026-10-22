@@ -80,7 +80,7 @@ try:
     pty = json.loads(op.open(req, timeout=30).read()); pid = pty['id']
     cookie = '; '.join(f'{c.name}={c.value}' for c in jars[9001])
     out = subprocess.run(['curl', '-s', '-i', '--max-time', '5', '-H', f'Cookie: {cookie}', '-H', 'x-opencode-directory: %2Fworkspace', '-H', 'Connection: Upgrade', '-H', 'Upgrade: websocket',
-                          '-H', 'Sec-WebSocket-Version: 13', '-H', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==', f'{BASE}/pty/{pid}/connect'], capture_output=True, text=True).stdout
+                          '-H', 'Sec-WebSocket-Version: 13', '-H', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==', f'{BASE}/pty/{pid}/connect'], capture_output=True).stdout.decode(errors='replace')
     check('WebSocket терминала: 101 Switching Protocols и приглашение bash', '101 Switching Protocols' in out and 'coder@' in out, out[:200])
 except Exception as e: check('WebSocket терминала', False, repr(e)[:200])
 print('ИТОГ:', 'всё прошло' if not fails else f'провалено: {fails}')
