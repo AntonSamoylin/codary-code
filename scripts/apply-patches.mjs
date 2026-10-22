@@ -89,12 +89,35 @@ edit('packages/desktop/src/main/windows.ts', [['title: "OpenCode",', `title: "${
 edit('packages/app/src/pages/layout/deep-links.ts', [['input.startsWith("opencode://")', 'input.startsWith("codary-code://")']])
 // автообновление через electron-updater на macOS требует подписи — без неё не включаем (обновление вручную со страницы загрузки)
 edit('packages/desktop/src/main/constants.ts', [['app.isPackaged && CHANNEL !== "dev"', 'app.isPackaged && CHANNEL !== "dev" && process.platform !== "darwin"']])
-// сервер внутри приложения: без рекламных провайдеров OpenCode (Zen/Go), автообновления CLI и публикации сессий на opencode.ai
+// сервер внутри приложения: без рекламных провайдеров OpenCode (Zen/Go), автообновления CLI и публикации сессий на opencode.ai;
+// провайдер «Codary AI-шлюз» добавляем только когда включён флаг (brand/features.json или CODARY_GATEWAY=1): шлюз пока закрыт
+const features = JSON.parse(readFileSync(join(BRAND, 'features.json'), 'utf8'))
+const gatewayOn = process.env.CODARY_GATEWAY ? process.env.CODARY_GATEWAY === '1' : !!features.gatewayProvider
+const GATEWAY_MODELS = ['glm-5.3', 'glm-5.3-flash', 'glm-5.3-flashx', 'glm-5', 'glm-4.7', 'glm-4.5-air']
+const inlineConfig = { disabled_providers: ['opencode', 'opencode-go'], autoupdate: false, share: 'disabled' }
+if (gatewayOn) {
+  inlineConfig.provider = {
+    codary: {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'Codary AI-шлюз',
+      options: { baseURL: 'https://api.codary.ru/v1' },
+      models: Object.fromEntries(GATEWAY_MODELS.map((m) => [m, { name: m, limit: { context: 128000, output: 16384 } }])),
+    },
+  }
+}
+console.log(`✓ провайдер шлюза Codary: ${gatewayOn ? 'ВКЛЮЧЁН' : 'выключен'}`)
 edit('packages/desktop/src/main/server.ts', [[
   '    OPENCODE_CLIENT: "desktop",\n',
   '    OPENCODE_CLIENT: "desktop",\n    OPENCODE_DISABLE_AUTOUPDATE: "true",\n' +
-  '    OPENCODE_CONFIG_CONTENT: JSON.stringify({ disabled_providers: ["opencode", "opencode-go"], autoupdate: false, share: "disabled" }),\n',
+  `    OPENCODE_CONFIG_CONTENT: JSON.stringify(${JSON.stringify(inlineConfig)}),\n`,
 ]])
+
+// встроенный плагин Codary: задачи по расписанию и управление из Telegram (plugins/codary -> packages/opencode/src/plugin/codary)
+copyDir(join(ROOT, 'plugins', 'codary'), p('packages/opencode/src/plugin/codary'))
+edit('packages/opencode/src/plugin/index.ts', [
+  ['import { CerebrasPlugin } from "./cerebras"\n', 'import { CerebrasPlugin } from "./cerebras"\nimport { CodaryPlugin } from "./codary"\n'],
+  ['    CerebrasPlugin,\n  ]', '    CerebrasPlugin,\n    CodaryPlugin,\n  ]'],
+])
 
 // ---------------------------------------------------------------- интерфейс
 edit('packages/desktop/src/renderer/index.html', [['<title>OpenCode</title>', `<title>${NAME}</title>`]])
