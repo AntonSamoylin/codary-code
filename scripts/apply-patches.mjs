@@ -237,6 +237,65 @@ edit('packages/app/src/pages/home/home-controller.ts', [
     '      openProjectNewSession,\n    },\n  }\n\n  void cloudInfo().then((info) => {\n    const conn = focusedServer()\n    if (!info?.project || !conn || projects().length > 0) return\n    try {\n      if (localStorage.getItem("codary.cloud.default-project")) return\n      localStorage.setItem("codary.cloud.default-project", "1")\n    } catch {}\n    controller.project.add(conn, [info.project])\n  })\n\n  return controller\n}\n\nexport type HomeController'],
 ])
 
+// ---------------------------------------------------------------- вход в приложение через сайт (brand/desktop): аккаунт Codary и токен устройства
+// Окно входа закрывает интерфейс, пока нет аккаунта; включается флагом requireLogin (brand/features.json) или CODARY_REQUIRE_LOGIN=1 при сборке.
+{
+  const loginOn = process.env.CODARY_REQUIRE_LOGIN ? process.env.CODARY_REQUIRE_LOGIN === '1' : !!features.requireLogin
+  const authSrc = readFileSync(join(BRAND, 'desktop', 'codary-auth.ts'), 'utf8')
+  if (!authSrc.includes('/*REQUIRE_LOGIN*/ false')) { console.error('✗ codary-auth.ts: нет метки REQUIRE_LOGIN'); failed++ }
+  writeFileSync(p('packages/desktop/src/main/codary-auth.ts'), authSrc.replace('/*REQUIRE_LOGIN*/ false', String(loginOn)))
+  copyFileSync(join(BRAND, 'desktop', 'codary-login.tsx'), p('packages/desktop/src/renderer/codary-login.tsx'))
+  console.log(`✓ вход через сайт: ${loginOn ? 'ВКЛЮЧЁН (экран входа закрывает интерфейс)' : 'выключен'}`)
+}
+edit('packages/desktop/src/preload/types.ts', [
+  ['export type ServerReadyData = {', `export type CodaryAuthState = {
+  enabled: boolean
+  state: "out" | "waiting" | "in"
+  code?: string
+  message?: string
+  account?: { status: string; balanceRub: number }
+}
+
+export type ServerReadyData = {`],
+  ['  setNativeTranslations: (bundle: DesktopNativeBundle) => Promise<void>\n}', `  setNativeTranslations: (bundle: DesktopNativeBundle) => Promise<void>
+  codaryAuth: {
+    status: () => Promise<CodaryAuthState>
+    login: () => Promise<CodaryAuthState>
+    cancel: () => Promise<CodaryAuthState>
+    logout: () => Promise<CodaryAuthState>
+    devices: () => Promise<void>
+    onChange: (cb: (state: CodaryAuthState) => void) => () => void
+  }
+}`],
+])
+edit('packages/desktop/src/preload/index.ts', [
+  ['  setNativeTranslations: (bundle) => ipcRenderer.invoke("set-native-translations", bundle),\n}', `  setNativeTranslations: (bundle) => ipcRenderer.invoke("set-native-translations", bundle),
+  codaryAuth: {
+    status: () => ipcRenderer.invoke("codary-auth:status"),
+    login: () => ipcRenderer.invoke("codary-auth:login"),
+    cancel: () => ipcRenderer.invoke("codary-auth:cancel"),
+    logout: () => ipcRenderer.invoke("codary-auth:logout"),
+    devices: () => ipcRenderer.invoke("codary-auth:devices"),
+    onChange: (cb) => {
+      const handler = (_: unknown, state: Parameters<typeof cb>[0]) => cb(state)
+      ipcRenderer.on("codary-auth:changed", handler)
+      return () => ipcRenderer.removeListener("codary-auth:changed", handler)
+    },
+  },
+}`],
+])
+edit('packages/desktop/src/main/index.ts', [
+  ['import { checkAppExists, resolveAppPath } from "./apps"\n', 'import { checkAppExists, resolveAppPath } from "./apps"\nimport { codaryAuthPoke, codarySetServer, registerCodaryAuth } from "./codary-auth"\n'],
+  ['function emitDeepLinks(urls: string[]) {\n  if (urls.length === 0) return\n', 'function emitDeepLinks(urls: string[]) {\n  if (urls.length === 0) return\n  if (urls.some((url) => url.startsWith("codary-code://auth"))) codaryAuthPoke()\n'],
+  ['  registerWslIpcHandlers(wslServers)\n', '  registerWslIpcHandlers(wslServers)\n  registerCodaryAuth()\n'],
+  ['    server = listener\n    yield* Deferred.succeed(serverReady, {\n      url,\n      username: "opencode",\n      password,\n    })\n', '    server = listener\n    codarySetServer({ url, username: "opencode", password })\n    yield* Deferred.succeed(serverReady, {\n      url,\n      username: "opencode",\n      password,\n    })\n'],
+])
+edit('packages/desktop/src/renderer/index.tsx', [
+  ['import { initializationData } from "./initialization"\n', 'import { initializationData } from "./initialization"\nimport { CodaryLoginGate } from "./codary-login"\n'],
+  ['            <AppInterface\n              defaultServer={key}', '            <CodaryLoginGate>\n            <AppInterface\n              defaultServer={key}'],
+  ['              <Inner />\n            </AppInterface>', '              <Inner />\n            </AppInterface>\n            </CodaryLoginGate>'],
+])
+
 // ---------------------------------------------------------------- переводы: «OpenCode» -> «Codary Code» (только в словарях строк)
 {
   const dirs = ['packages/app/src/i18n', 'packages/ui/src/i18n', 'packages/desktop/src/renderer/i18n']
