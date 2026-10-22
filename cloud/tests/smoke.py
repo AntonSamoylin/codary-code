@@ -79,9 +79,9 @@ req = urllib.request.Request(BASE + '/pty', data=json.dumps({'command': '/bin/ba
 try:
     pty = json.loads(op.open(req, timeout=30).read()); pid = pty['id']
     cookie = '; '.join(f'{c.name}={c.value}' for c in jars[9001])
-    ctx = ssl.create_default_context(); conn = http.client.HTTPSConnection(HOST, context=ctx, timeout=15)
-    conn.request('GET', f'/pty/{pid}/connect', headers={'Connection': 'Upgrade', 'Upgrade': 'websocket', 'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Key': base64.b64encode(os.urandom(16)).decode(), 'Cookie': cookie, 'x-opencode-directory': urllib.parse.quote('/workspace')})
-    r = conn.getresponse(); check('WebSocket терминала: 101 Switching Protocols', r.status == 101, r.status)
+    out = subprocess.run(['curl', '-s', '-i', '--max-time', '5', '-H', f'Cookie: {cookie}', '-H', 'x-opencode-directory: %2Fworkspace', '-H', 'Connection: Upgrade', '-H', 'Upgrade: websocket',
+                          '-H', 'Sec-WebSocket-Version: 13', '-H', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==', f'{BASE}/pty/{pid}/connect'], capture_output=True, text=True).stdout
+    check('WebSocket терминала: 101 Switching Protocols и приглашение bash', '101 Switching Protocols' in out and 'coder@' in out, out[:200])
 except Exception as e: check('WebSocket терминала', False, repr(e)[:200])
 print('ИТОГ:', 'всё прошло' if not fails else f'провалено: {fails}')
 sys.exit(1 if fails else 0)
