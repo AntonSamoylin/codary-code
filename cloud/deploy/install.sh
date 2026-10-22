@@ -51,7 +51,9 @@ systemctl enable --now codary-cloud-fw.service codary-cloud-manager.service
 systemctl restart codary-cloud-manager.service
 
 # nginx: сначала только порт 80, затем certbot добавляет HTTPS
-sed "s/@DOMAIN@/$DOMAIN/g" "$HERE/deploy/nginx-cloud.conf" > /etc/nginx/sites-available/codary-cloud.conf
+# конфиг пишем только в первый раз: после `certbot --nginx` в нём лежат настройки HTTPS, затирать их нельзя
+CONF=/etc/nginx/sites-available/codary-cloud.conf
+[ -f "$CONF" ] || sed "s/@DOMAIN@/$DOMAIN/g" "$HERE/deploy/nginx-cloud.conf" > "$CONF"
 ln -sf /etc/nginx/sites-available/codary-cloud.conf /etc/nginx/sites-enabled/codary-cloud.conf
 nginx -t && systemctl reload nginx
 echo "готово. HTTPS: certbot --nginx -d $DOMAIN --non-interactive --agree-tos -m <почта> --redirect"
