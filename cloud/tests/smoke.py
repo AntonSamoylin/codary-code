@@ -46,9 +46,9 @@ code, _, h = get(opener(), '/'); check('без входа — перенапра
 code, _, _ = get(opener(), '/session', {'Cookie': 'cc_session=forged-cookie-value'}); check('поддельный cookie не пускает', code in (302, 401), code)
 
 print('2. Запуск сред и лимит (максимум 3)')
-users = {}
+users = {}; jars = {}
 for uid in (9001, 9002, 9003, 9004):
-    op, jar, code, h = login(uid); users[uid] = op; check(f'вход пользователя {uid}', code == 302, code)
+    op, jar, code, h = login(uid); users[uid] = op; jars[uid] = jar; check(f'вход пользователя {uid}', code == 302, code)
 for uid in (9001, 9002, 9003): get(users[uid], '/')   # запускает среду
 ready = {}
 end = time.time() + 120
@@ -78,7 +78,7 @@ op = users[9001]
 req = urllib.request.Request(BASE + '/pty', data=json.dumps({'command': '/bin/bash'}).encode(), headers={'content-type': 'application/json', 'x-opencode-directory': urllib.parse.quote('/workspace')}, method='POST')
 try:
     pty = json.loads(op.open(req, timeout=30).read()); pid = pty['id']
-    cookie = '; '.join(f'{c.name}={c.value}' for c in [c for c in op.handlers[-1].cookiejar])
+    cookie = '; '.join(f'{c.name}={c.value}' for c in jars[9001])
     ctx = ssl.create_default_context(); conn = http.client.HTTPSConnection(HOST, context=ctx, timeout=15)
     conn.request('GET', f'/pty/{pid}/connect', headers={'Connection': 'Upgrade', 'Upgrade': 'websocket', 'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Key': base64.b64encode(os.urandom(16)).decode(), 'Cookie': cookie, 'x-opencode-directory': urllib.parse.quote('/workspace')})
     r = conn.getresponse(); check('WebSocket терминала: 101 Switching Protocols', r.status == 101, r.status)
