@@ -41,7 +41,7 @@ code, _, _ = get(opener(), '/enter?t=' + token(9001, ttl=100000)); check('ток
 t = token(9001); op = opener(); c1, _, _ = get(op, '/enter?t=' + t); c2, _, _ = get(opener(), '/enter?t=' + t)
 check('токен работает один раз', c1 == 302 and c2 == 403, f'{c1}/{c2}')
 code, _, h = get(opener(), '/'); check('без входа — перенаправление на сайт', code == 302 and 'codary.ru' in (h.get('Location') or ''), f'{code} {h.get("Location")}')
-code, _, _ = get(opener(), '/session', {'Cookie': 'cc_session=подделка'}); check('поддельный cookie не пускает', code in (302, 401), code)
+code, _, _ = get(opener(), '/session', {'Cookie': 'cc_session=forged-cookie-value'}); check('поддельный cookie не пускает', code in (302, 401), code)
 
 print('2. Запуск сред и лимит (максимум 3)')
 users = {}
