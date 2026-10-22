@@ -34,7 +34,7 @@ def login(uid):
 def docker(*a): return subprocess.run(['docker', *a], capture_output=True, text=True).stdout.strip()
 
 # чистое состояние: тест рассчитан на пустой сервер сред (не запускать на боевых пользователях!)
-subprocess.run('docker ps -aq --filter label=codary.cloud=1 | xargs -r docker rm -f >/dev/null 2>&1; systemctl restart codary-cloud-manager; sleep 2', shell=True)
+subprocess.run('docker ps -aq --filter label=codary.cloud=1 | xargs -r docker rm -f >/dev/null 2>&1; for m in /var/lib/codary-cloud/mnt/u9* /var/lib/codary-cloud/mnt/u1; do umount -l "$m" 2>/dev/null; done; rm -f /var/lib/codary-cloud/img/u9*.img /var/lib/codary-cloud/img/u1.img; systemctl restart codary-cloud-manager; sleep 2', shell=True)
 print('1. Защита входа')
 code, _, _ = get(opener(), '/enter?t=abc'); check('мусорный токен отклонён', code == 403, code)
 code, _, _ = get(opener(), '/enter?t=' + token(9001, secret='x' * 40)); check('токен с чужой подписью отклонён', code == 403, code)
