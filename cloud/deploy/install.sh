@@ -11,7 +11,7 @@ cp "$HERE/deploy/firewall.sh" $APP/ && chmod +x $APP/firewall.sh
 
 # окружение Python
 [ -d $APP/venv ] || python3 -m venv $APP/venv
-$APP/venv/bin/pip install -q fastapi 'uvicorn[standard]' >/dev/null
+$APP/venv/bin/pip install -q fastapi 'uvicorn[standard]' python-multipart >/dev/null
 
 # секрет входа (общий с сайтом); создаётся один раз
 [ -f $APP/env ] || { printf 'CC_SECRET=%s\nCC_MAX_CONTAINERS=3\nCC_IDLE_MINUTES=20\n' "$(python3 -c 'import secrets;print(secrets.token_urlsafe(48))')" > $APP/env; chmod 600 $APP/env; }
