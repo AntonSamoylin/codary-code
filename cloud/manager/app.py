@@ -22,6 +22,7 @@ import re
 import secrets
 import sqlite3
 import time
+import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager
 
@@ -54,7 +55,12 @@ CFG = {
     "digest_hour_utc": int(os.environ.get("CC_DIGEST_HOUR_UTC", "6")),   # 06:00 UTC = 09:00 МСК
     "disk_warn": float(os.environ.get("CC_DISK_WARN", "0.9")),
     "disk_check_seconds": float(os.environ.get("CC_DISK_CHECK_SECONDS", "300")),
+    # Режим «только Codary»: у каждого клиента свой токен устройства «облако» у шлюза; контейнеру передаётся он, а не ключи нейросетей.
+    # Включается, когда задан секрет облака (тот же, что GW_CLOUD_SECRET у шлюза); без него среда работает как раньше (свои провайдеры).
+    "gateway_url": os.environ.get("CC_GATEWAY_URL", "https://api.codary.ru").rstrip("/"),
+    "gateway_cloud_secret": os.environ.get("CC_GATEWAY_CLOUD_SECRET", ""),
 }
+CONTAINER_PORT = int(os.environ.get("CC_CONTAINER_PORT", "4096"))   # порт сервера в контейнере (меняется только в проверках)
 COOKIE = "cc_session"
 CONTAINER_CONFIG = json.dumps({"disabled_providers": ["opencode", "opencode-go"], "autoupdate": False, "share": "disabled"})
 
@@ -84,6 +90,7 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS usage(uid TEXT NOT NULL, started REAL NOT NULL, stopped REAL)")
         c.execute("CREATE TABLE IF NOT EXISTS events(ts REAL NOT NULL, kind TEXT NOT NULL, uid TEXT, detail TEXT)")
         c.execute("CREATE INDEX IF NOT EXISTS usage_uid ON usage(uid, started)")
+        c.execute("CREATE TABLE IF NOT EXISTS cloud_tokens(uid TEXT PRIMARY KEY, token TEXT NOT NULL, created REAL NOT NULL)")
 
 
 def event(kind: str, uid: str | None = None, detail: str = ""):
@@ -279,7 +286,7 @@ async def container_ip(uid: str) -> str:
 
 
 async def http_get(ip: str, path: str, extra: str = "", limit: int = 65536) -> bytes:
-    r, w = await asyncio.wait_for(asyncio.open_connection(ip, 4096), 2)
+    r, w = await asyncio.wait_for(asyncio.open_connection(ip, CONTAINER_PORT), 2)
     w.write(f"GET {path} HTTP/1.0\r\nHost: x\r\n{extra}\r\n".encode())
     await w.drain()
     data = await asyncio.wait_for(r.read(limit), 4)
@@ -293,6 +300,74 @@ async def healthy(ip: str) -> bool:
         return b" 200 " in data.split(b"\r\n", 1)[0] + b" "
     except Exception:
         return False
+
+
+async def http_json(ip: str, method: str, path: str, body: dict | None = None, extra: str = "") -> int:
+    """Запрос к серверу в контейнере (без авторизации: он доступен только из сети менеджера). Возвращает код ответа."""
+    raw = json.dumps(body).encode() if body is not None else b""
+    r, w = await asyncio.wait_for(asyncio.open_connection(ip, CONTAINER_PORT), 2)
+    w.write(f"{method} {path} HTTP/1.0\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {len(raw)}\r\n{extra}\r\n".encode() + raw)
+    await w.drain()
+    head = await asyncio.wait_for(r.read(300), 15)
+    w.close()
+    try:
+        return int(head.split(b" ", 2)[1])
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _gw_request(method: str, path: str, body: dict | None = None, headers: dict | None = None) -> tuple[int, dict]:
+    req = urllib.request.Request(CFG["gateway_url"] + path, method=method, data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Content-Type": "application/json", **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status, json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read() or b"{}")
+        except Exception:  # noqa: BLE001
+            return e.code, {}
+    except Exception:  # noqa: BLE001
+        return 0, {}
+
+
+async def ensure_token(uid: str) -> str | None:
+    """Токен устройства «облако» клиента у шлюза: берём сохранённый, проверяем (/v1/me); отозван (401) — просим новый. Нет связи со шлюзом — оставляем прежний."""
+    if not CFG["gateway_cloud_secret"] or not uid.isdigit():
+        return None
+    with db() as c:
+        row = c.execute("SELECT token FROM cloud_tokens WHERE uid=?", (uid,)).fetchone()
+    if row:
+        status, _ = await asyncio.to_thread(_gw_request, "GET", "/v1/me", None, {"Authorization": "Bearer " + row[0]})
+        if status != 401:
+            return row[0]
+    status, data = await asyncio.to_thread(_gw_request, "POST", "/v1/cloud/token", {"client_id": int(uid)}, {"X-Cloud-Secret": CFG["gateway_cloud_secret"]})
+    if status != 200 or not data.get("token"):
+        event("token_failed", uid, f"шлюз ответил {status}")
+        await alert(f"token-{uid}", f"не удалось получить токен облака для клиента {uid} (шлюз ответил {status}): модели в среде не появятся")
+        return None
+    with db() as c:
+        c.execute("INSERT INTO cloud_tokens(uid, token, created) VALUES(?,?,?) ON CONFLICT(uid) DO UPDATE SET token=excluded.token, created=excluded.created", (uid, data["token"], time.time()))
+    event("token", uid, "выдан токен облака")
+    return data["token"]
+
+
+async def provision(uid: str, force: bool = False):
+    """Передать контейнеру токен как ключ провайдера «codary» (сервер перечитает конфигурацию и подтянет модели). Повторно — только если токен сменился."""
+    s = state.get(uid)
+    if not s or s.get("status") != "running" or not s.get("ip"):
+        return
+    try:
+        token = await ensure_token(uid)
+        if not token or (not force and s.get("token_pushed") == token):
+            return
+        if await http_json(s["ip"], "PUT", "/auth/codary", {"type": "api", "key": token}, "x-opencode-directory: %2Fworkspace\r\n") == 200:
+            await http_json(s["ip"], "POST", "/global/dispose")
+            s["token_pushed"] = token
+        else:
+            event("token_push_failed", uid)
+    except Exception as e:  # noqa: BLE001
+        event("token_push_failed", uid, str(e)[:200])
 
 
 async def is_busy(ip: str) -> bool:
@@ -340,7 +415,9 @@ async def start_container(uid: str):
                 "--pids-limit", CFG["pids"], "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "1000:1000",
                 "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=256m",   # exec нужен: сервер распаковывает в /tmp системную библиотеку терминала
                 "-v", f"{mnt}/home:/home/coder", "-v", f"{mnt}/ws:/workspace",
-                "-e", f"OPENCODE_CONFIG_CONTENT={CONTAINER_CONFIG}", "--restart", "no", CFG["image"], timeout=120,
+                "-e", f"OPENCODE_CONFIG_CONTENT={CONTAINER_CONFIG}",
+                *(["-e", "CODARY_RESTRICT_PROVIDERS=1", "-e", f"CODARY_API_URL={CFG['gateway_url']}", "-e", "CODARY_APP_PLATFORM=cloud"] if CFG["gateway_cloud_secret"] else []),
+                "--restart", "no", CFG["image"], timeout=120,
             )
             if code != 0:
                 raise RuntimeError(out[-300:])
@@ -352,6 +429,7 @@ async def start_container(uid: str):
                     c.execute("INSERT INTO usage(uid, started) VALUES(?,?)", (uid, time.time()))
                 event("start", uid)
                 peak["day"] = max(peak["day"], running_count())
+                await provision(uid, force=True)
                 return
             await asyncio.sleep(1)
         raise RuntimeError("сервер в контейнере не ответил за 90 секунд")
@@ -519,6 +597,8 @@ async def enter(t: str = ""):
         sid = secrets.token_urlsafe(32)
         c.execute("INSERT INTO sessions(id, uid, created, expires, admin) VALUES(?,?,?,?,?)", (sid, str(p["uid"]), now, now + CFG["session_hours"] * 3600, 1 if p.get("adm") else 0))
     event("login", str(p["uid"]), "admin" if p.get("adm") else "")
+    if CFG["gateway_cloud_secret"] and state.get(str(p["uid"]), {}).get("status") == "running":
+        asyncio.create_task(provision(str(p["uid"])))     # среда уже работает: проверяем токен (мог быть отозван) и при смене передаём новый
     resp = RedirectResponse("/_admin" if p.get("adm") else "/", status_code=302)
     resp.set_cookie(COOKIE, sid, max_age=int(CFG["session_hours"] * 3600), httponly=True, secure=CFG["cookie_secure"], samesite="lax", path="/")
     return resp
