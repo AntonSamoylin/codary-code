@@ -11,7 +11,7 @@ RUN git config --global --add safe.directory '*' && ./scripts/fetch-upstream.sh 
 WORKDIR /src/upstream
 RUN bun install --frozen-lockfile
 WORKDIR /src/upstream/packages/opencode
-ENV OPENCODE_CHANNEL=prod OPENCODE_VERSION=1.1.0
+ENV OPENCODE_CHANNEL=prod OPENCODE_VERSION=1.2.0
 RUN bun run script/build.ts --single --skip-install \
  && mkdir -p /out && cp "$(ls -d dist/opencode-linux-x64*/bin/opencode | grep -v musl | head -1)" /out/opencode && /out/opencode --version
 
