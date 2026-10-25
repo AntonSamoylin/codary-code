@@ -76,6 +76,10 @@ try:
     calls = api('GET', '/_calls', port=GW)
     chat = [c for c in calls if c['path'] == '/v1/chat/completions']
     check('шлюз получил токен устройства и имя модели', bool(chat) and chat[-1]['auth'] == 'Bearer sk-cdr-test-token' and chat[-1]['model'] == 'glm-5.3', str(chat)[-300:])
+    if os.environ.get('MEASURE'):
+        c = chat[-1]; tools = sorted(c['tools'], key=lambda x: -x[1])
+        print('  ЗАМЕР: system', len(c['system']), 'симв.; tools', sum(n for _, n in tools), 'симв. в', len(tools), 'шт.; сообщения', c['msg_chars'], 'симв.')
+        print('  ЗАМЕР: крупнейшие инструменты:', ', '.join(f'{a}={b}' for a, b in tools[:12]))
     check('индекс памяти проекта .codary/index.md и правила ведения папки доходят до модели', bool(chat) and 'МАРКЕР-ПАМЯТИ-42' in chat[-1].get('system', '') and 'Память проекта (.codary/)' in chat[-1].get('system', ''), chat[-1].get('system', '')[-200:] if chat else '')
     check('правила chisle (краткий режим) доходят до модели в системной подсказке', bool(chat) and 'Chisle: максимум смысла' in chat[-1].get('system', ''), chat[-1].get('system', '')[:120] if chat else '')
     listing = [c for c in calls if c['path'] == '/v1/models']

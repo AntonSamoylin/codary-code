@@ -26,7 +26,7 @@ class H(BaseHTTPRequestHandler):
         if self.path == '/_models': state['models'] = body; return self.send(200, {})
         if self.path == '/_error': state['error'] = body or None; return self.send(200, {})      # {"status": 424, "code": "x"} — отвечать ошибкой; {} — снять
         if self.path == '/v1/chat/completions':
-            state['calls'].append({'path': self.path, 'auth': self.headers.get('authorization'), 'model': body.get('model'), 'system': ' '.join(m.get('content') if isinstance(m.get('content'), str) else '' for m in body.get('messages', []) if m.get('role') == 'system'), 'platform': self.headers.get('x-codary-platform')})
+            state['calls'].append({'path': self.path, 'auth': self.headers.get('authorization'), 'tools': [(t.get('function', {}).get('name'), len(json.dumps(t, ensure_ascii=False))) for t in (body.get('tools') or [])], 'msg_chars': sum(len(json.dumps(m.get('content'), ensure_ascii=False)) for m in body.get('messages', []) if m.get('role') != 'system'), 'model': body.get('model'), 'system': ' '.join(m.get('content') if isinstance(m.get('content'), str) else '' for m in body.get('messages', []) if m.get('role') == 'system'), 'platform': self.headers.get('x-codary-platform')})
             if not self.authed(): return self.send(401, {'error': {'message': 'Неверный токен'}})
             if state.get('error'): return self.send(state['error']['status'], {'error': {'message': 'Тестовая ошибка шлюза', 'code': state['error'].get('code', 'x'), 'type': 'api_error'}})
             self.send_response(200); self.send_header('content-type', 'text/event-stream'); self.end_headers()
