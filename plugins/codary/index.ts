@@ -4,7 +4,7 @@ import { emit, shared } from "./shared"
 import { startScheduler } from "./scheduler"
 import { startTelegram } from "./telegram"
 import { tools } from "./tools"
-import { codaryConfig } from "./account"
+import { codaryCommands, codaryConfig } from "./account"
 
 export async function CodaryPlugin(input: PluginInput): Promise<Hooks> {
   if (process.env.CODARY_DISABLE_PLUGIN) return {}
@@ -15,7 +15,10 @@ export async function CodaryPlugin(input: PluginInput): Promise<Hooks> {
     startTelegram()
   }
   return {
-    config: codaryConfig,
+    config: async (config: any) => {
+      codaryCommands(config)
+      await codaryConfig(config)
+    },
     tool: tools,
     event: async ({ event }) => emit({ type: event.type, properties: (event as any).properties }),
   }

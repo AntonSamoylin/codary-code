@@ -16,6 +16,8 @@ type Card = {
   vision?: boolean
   context_length?: number | null
   max_output?: number | null
+  free?: boolean
+  pricing?: { prompt?: number; completion?: number }
 }
 let cache: { token: string; at: number; models: Record<string, unknown>; first?: string } | undefined
 
@@ -35,10 +37,19 @@ async function readToken(): Promise<string | undefined> {
   }
 }
 
+/** Цена в названии: сразу видно, какая модель дешёвая, а какая дорогая (₽ за 1 млн токенов, вход/выход). Нулевая цена у моделей по подписке не пишется. */
+function priced(card: Card) {
+  const name = card.name ?? card.id ?? ""
+  if (card.free) return `${name} · бесплатно`
+  const input = Math.round(card.pricing?.prompt ?? 0)
+  const output = Math.round(card.pricing?.completion ?? 0)
+  return input || output ? `${name} · ${input}/${output} ₽` : name
+}
+
 function toModel(card: Card) {
   const vision = !!card.vision
   return {
-    name: card.name ?? card.id,
+    name: priced(card),
     tool_call: true,
     temperature: true,
     attachment: vision,
@@ -89,4 +100,38 @@ export async function codaryConfig(config: any) {
   const valid = current.startsWith(`${PROVIDER_ID}/`) && !!loaded?.models[current.slice(PROVIDER_ID.length + 1)]
   if (!valid) config.model = loaded?.first ? `${PROVIDER_ID}/${loaded.first}` : undefined
   if (typeof config.small_model === "string" && !config.small_model.startsWith(`${PROVIDER_ID}/`)) config.small_model = undefined
+}
+
+// Команды в меню «/» (в самом OpenCode уже есть /review и /init). Пользовательские команды с теми же именами важнее наших.
+const COMMANDS: Record<string, { description: string; template: string }> = {
+  fix: {
+    description: "собрать и прогнать тесты, исправить ошибки",
+    template:
+      "Запусти сборку и тесты проекта (команды найди в package.json, Makefile, README или CI-конфигурации), прочитай ошибки и исправь причину, а не симптом. " +
+      "Повторяй, пока всё не пройдёт или пока не упрёшься в то, что решить нельзя без меня. Ничего не удаляй без необходимости. " +
+      "В конце коротко: что было не так, что изменил, что осталось. $ARGUMENTS",
+  },
+  tests: {
+    description: "написать тесты для изменений или указанного файла",
+    template:
+      "Напиши тесты для: $ARGUMENTS. Если ничего не указано — для последних изменений (git diff). Используй тестовый фреймворк, который уже есть в проекте, " +
+      "запусти тесты и доведи их до зелёного. Не меняй рабочий код без необходимости: если нашёл в нём ошибку, сначала сообщи.",
+  },
+  explain: {
+    description: "объяснить, как устроен проект или файл",
+    template:
+      "Объясни простыми словами, как устроен: $ARGUMENTS. Если ничего не указано — проект целиком: структура, главные файлы, как запустить и проверить. " +
+      "Ничего не меняй. Если что-то непонятно или выглядит ошибкой, скажи об этом отдельно.",
+  },
+  commit: {
+    description: "составить сообщение и сделать коммит",
+    template:
+      "Посмотри git status и git diff. Предложи понятное сообщение коммита (по-русски: первая строка до 70 знаков, при необходимости пустая строка и пояснение) " +
+      "и сделай коммит только тех изменений, что относятся к задаче; лишнее оставь. Не отправляй на сервер (никакого push). $ARGUMENTS",
+  },
+}
+
+export function codaryCommands(config: any) {
+  config.command ??= {}
+  for (const [name, command] of Object.entries(COMMANDS)) config.command[name] ??= command
 }

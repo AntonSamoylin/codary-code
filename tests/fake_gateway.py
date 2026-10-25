@@ -5,8 +5,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN = 'sk-cdr-test-token'
 state = {'calls': [], 'models': [
-    {'id': 'glm-5.3', 'object': 'model', 'owned_by': 'zai', 'name': 'GLM 5.3', 'vision': False, 'context_length': 128000, 'max_output': 16384},
-    {'id': 'openrouter/anthropic/claude-sonnet-4.5', 'object': 'model', 'owned_by': 'openrouter', 'name': 'Claude Sonnet 4.5', 'vision': True, 'context_length': 200000, 'max_output': 16000},
+    {'id': 'glm-5.3', 'object': 'model', 'owned_by': 'zai', 'name': 'GLM 5.3', 'vision': False, 'context_length': 128000, 'max_output': 16384, 'pricing': {'prompt': 149.18, 'completion': 468.86}},
+    {'id': 'openrouter/anthropic/claude-sonnet-4.5', 'object': 'model', 'owned_by': 'openrouter', 'name': 'Claude Sonnet 4.5', 'vision': True, 'pricing': {'prompt': 0, 'completion': 0}, 'context_length': 200000, 'max_output': 16000},
     {'id': 'glm-image', 'object': 'model', 'owned_by': 'zai', 'type': 'image'}]}
 
 class H(BaseHTTPRequestHandler):

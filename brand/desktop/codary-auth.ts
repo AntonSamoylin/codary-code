@@ -113,8 +113,14 @@ export async function refreshAccount(force = false) {
     const response = await fetch(`${API}/v1/me`, { headers: { Authorization: `Bearer ${token}`, ...clientHeaders() }, signal: AbortSignal.timeout(15_000) })
     if (response.status === 401) return void (await clearLocal("Это устройство отключено. Войдите снова."))
     if (!response.ok) return
-    const data = (await response.json()) as { status?: string; balance_rub?: number }
-    account = { status: String(data.status ?? "active"), balanceRub: Number(data.balance_rub ?? 0) }
+    const data = (await response.json()) as { status?: string; balance_rub?: number; today_rub?: number; avg_request_rub?: number; requests_left?: number | null }
+    account = {
+      status: String(data.status ?? "active"),
+      balanceRub: Number(data.balance_rub ?? 0),
+      todayRub: Number(data.today_rub ?? 0),
+      avgRub: Number(data.avg_request_rub ?? 0),
+      left: data.requests_left ?? null,
+    }
     broadcast()
   } catch {
     // нет сети: оставляем прежнее состояние

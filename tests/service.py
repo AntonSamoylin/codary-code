@@ -58,6 +58,11 @@ try:
     check('модели взяты из шлюза (картинки не включены)', sorted(models) == ['glm-5.3', 'openrouter/anthropic/claude-sonnet-4.5'], str(sorted(models)))
     claude = models.get('openrouter/anthropic/claude-sonnet-4.5', {})
     check('у модели контекст и понимание картинок из шлюза', claude.get('limit', {}).get('context') == 200000 and claude.get('capabilities', {}).get('input', {}).get('image') is True, str(claude)[:300])
+    check('цена в названии модели (вход/выход, ₽ за 1 млн)', models.get('glm-5.3', {}).get('name') == 'GLM 5.3 · 149/469 ₽', str(models.get('glm-5.3', {}).get('name')))
+    check('у модели без цены (подписка) в названии цены нет', claude.get('name') == 'Claude Sonnet 4.5', str(claude.get('name')))
+    cmds = {c['name']: c for c in api('GET', '/command')}
+    check('в меню «/» есть /fix /tests /explain /commit и встроенные /review /init', all(n in cmds for n in ('fix', 'tests', 'explain', 'commit', 'review', 'init')), str(sorted(cmds)))
+    check('описание команды по-русски', 'тест' in cmds.get('fix', {}).get('description', ''), str(cmds.get('fix')))
     cfg = api('GET', '/config')
     check('модель по умолчанию — первая из списка шлюза (своя fake/m не применена)', cfg.get('model') == 'codary/glm-5.3', str(cfg.get('model')))
     check('enabled_providers = [codary]', cfg.get('enabled_providers') == ['codary'], str(cfg.get('enabled_providers')))

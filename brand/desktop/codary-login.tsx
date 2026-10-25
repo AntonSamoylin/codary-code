@@ -178,10 +178,20 @@ function AccountPill(props: { state: CodaryAuthState }) {
       case "empty":
         return current?.status === "pending" ? "Пополните баланс, чтобы начать" : "Баланс исчерпан — пополните, чтобы продолжить"
       case "low":
-        return `Мало средств: ${rub(current?.balanceRub ?? 0)}`
+        return `Мало средств: ${rub(current?.balanceRub ?? 0)}${current?.left ? ` (≈ ${current.left} запросов)` : ""}`
       default:
         return current ? rub(current.balanceRub) : "Codary"
     }
+  }
+  // Подсказка по наведению: куда уходят деньги и на сколько хватит (главная жалоба пользователей Claude Code и Codex — непонятный расход)
+  const details = () => {
+    const current = account()
+    if (!current) return ""
+    const parts = [`Остаток: ${rub(current.balanceRub)}`]
+    if (current.todayRub) parts.push(`Сегодня потрачено: ${rub(current.todayRub)}`)
+    if (current.avgRub) parts.push(`Средний запрос: ${rub(current.avgRub)}`)
+    if (current.left) parts.push(`Хватит примерно на ${current.left} запросов`)
+    return parts.join("\n")
   }
   onMount(() => {
     const close = () => setMenu(false)
@@ -211,7 +221,12 @@ function AccountPill(props: { state: CodaryAuthState }) {
         }}
         onClick={(event) => event.stopPropagation()}
       >
-        <span>{text()}</span>
+        <span title={details()}>{text()}</span>
+        <Show when={kind() === "ok" && (account()?.todayRub ?? 0) > 0}>
+          <span style={{ "font-weight": "400", color: "var(--text-weak, #888)" }} title={details()}>
+            · сегодня −{rub(account()?.todayRub ?? 0)}
+          </span>
+        </Show>
         <Show when={kind() !== "blocked"}>
           <button
             style={{ padding: "4px 10px", "border-radius": "999px", border: "0", cursor: "pointer", "font-size": "12px", "font-weight": "700", background: "var(--text-strong, #111)", color: "var(--background-base, #fff)" }}
