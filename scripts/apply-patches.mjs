@@ -263,7 +263,7 @@ edit('packages/desktop/src/preload/types.ts', [
   state: "out" | "waiting" | "in"
   code?: string
   message?: string
-  account?: { status: string; balanceRub: number; todayRub?: number; avgRub?: number; left?: number | null; dailyLimitRub?: number | null }
+  account?: { status: string; balanceRub: number; todayRub?: number; avgRub?: number; left?: number | null; dailyLimitRub?: number | null; todayRequests?: number; todayTokensIn?: number; todayTokensCached?: number; todayTokensOut?: number }
 }
 
 export type ServerReadyData = {`],

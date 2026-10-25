@@ -113,7 +113,7 @@ export async function refreshAccount(force = false) {
     const response = await fetch(`${API}/v1/me`, { headers: { Authorization: `Bearer ${token}`, ...clientHeaders() }, signal: AbortSignal.timeout(15_000) })
     if (response.status === 401) return void (await clearLocal("Это устройство отключено. Войдите снова."))
     if (!response.ok) return
-    const data = (await response.json()) as { status?: string; balance_rub?: number; today_rub?: number; avg_request_rub?: number; requests_left?: number | null; daily_limit_rub?: number | null }
+    const data = (await response.json()) as { status?: string; balance_rub?: number; today_rub?: number; avg_request_rub?: number; requests_left?: number | null; daily_limit_rub?: number | null; today_requests?: number; today_tokens_in?: number; today_tokens_cached?: number; today_tokens_out?: number }
     account = {
       status: String(data.status ?? "active"),
       balanceRub: Number(data.balance_rub ?? 0),
@@ -121,6 +121,10 @@ export async function refreshAccount(force = false) {
       avgRub: Number(data.avg_request_rub ?? 0),
       left: data.requests_left ?? null,
       dailyLimitRub: data.daily_limit_rub ?? null,
+      todayRequests: Number(data.today_requests ?? 0),
+      todayTokensIn: Number(data.today_tokens_in ?? 0),
+      todayTokensCached: Number(data.today_tokens_cached ?? 0),
+      todayTokensOut: Number(data.today_tokens_out ?? 0),
     }
     broadcast()
   } catch {

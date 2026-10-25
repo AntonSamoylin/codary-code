@@ -33,6 +33,9 @@ const font = "var(--font-family-sans, system-ui, sans-serif)"
 
 const rub = (value: number) => new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value) + " ₽"
 const AMOUNTS = [200, 500, 1000, 2000]
+// Токены словами: 41 тыс., 1,2 млн (десятичная запятая по-русски)
+const tok = (n: number) =>
+  n < 1000 ? String(n) : n < 1_000_000 ? `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: n < 10_000 ? 1 : 0 }).format(n / 1000)} тыс.` : `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(n / 1_000_000)} млн`
 const LOW_BALANCE = 20
 
 function LoginScreen(props: { state: CodaryAuthState }) {
@@ -191,7 +194,18 @@ function AccountPill(props: { state: CodaryAuthState }) {
     const current = account()
     if (!current) return ""
     const parts = [`Остаток: ${rub(current.balanceRub)}`]
-    if (current.todayRub) parts.push(`Сегодня потрачено: ${rub(current.todayRub)}`)
+    const total = (current.todayTokensIn ?? 0) + (current.todayTokensOut ?? 0)
+    if (total > 0) {
+      parts.push(`Сегодня: ${current.todayRequests ?? 0} запросов, ${tok(total)} токенов (вход ${tok(current.todayTokensIn ?? 0)}, из них из кэша ${tok(current.todayTokensCached ?? 0)}; ответы ${tok(current.todayTokensOut ?? 0)})`)
+    }
+    parts.push(
+      current.todayRub
+        ? `Потрачено сегодня: ${rub(current.todayRub)}`
+        : total > 0
+          ? "Потрачено сегодня: 0 ₽. Рубли не списываются за модели «подписка» и бесплатные, токены при этом считаются."
+          : "Сегодня запросов ещё не было.",
+    )
+    parts.push("Платная модель: цена за 1 млн токенов (вход/выход) указана в списке моделей, токены из кэша дешевле.")
     if (current.avgRub) parts.push(`Средний запрос: ${rub(current.avgRub)}`)
     if (current.dailyLimitRub) parts.push(`Лимит в день: ${rub(current.dailyLimitRub)}`)
     if (current.left) parts.push(`Хватит примерно на ${current.left} запросов`)
@@ -240,6 +254,12 @@ function AccountPill(props: { state: CodaryAuthState }) {
           <span style={{ "font-weight": "400", color: "var(--text-weak, #888)" }} title={details()}>
             · сегодня −{rub(account()?.todayRub ?? 0)}
             {account()?.dailyLimitRub ? ` из ${rub(account()?.dailyLimitRub ?? 0)}` : ""}
+            {` · ${tok((account()?.todayTokensIn ?? 0) + (account()?.todayTokensOut ?? 0))} ток.`}
+          </span>
+        </Show>
+        <Show when={kind() === "ok" && (account()?.todayRub ?? 0) === 0 && (account()?.todayTokensIn ?? 0) + (account()?.todayTokensOut ?? 0) > 0}>
+          <span style={{ "font-weight": "400", color: "var(--text-weak, #888)" }} title={details()}>
+            {`· сегодня ${tok((account()?.todayTokensIn ?? 0) + (account()?.todayTokensOut ?? 0))} ток., ₽ не списываются`}
           </span>
         </Show>
         <Show when={limitReached()}>

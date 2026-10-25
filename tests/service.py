@@ -61,13 +61,14 @@ try:
     check('цена в названии модели (вход/выход, ₽ за 1 млн)', models.get('glm-5.3', {}).get('name') == 'GLM 5.3 · 149/469 ₽', str(models.get('glm-5.3', {}).get('name')))
     check('у модели без цены (подписка) в названии цены нет', claude.get('name') == 'Claude Sonnet 4.5', str(claude.get('name')))
     cmds = {c['name']: c for c in api('GET', '/command')}
-    check('в меню «/» есть /fix /tests /explain /commit /agents /chisle и встроенные /review /init', all(n in cmds for n in ('fix', 'tests', 'explain', 'commit', 'agents', 'chisle', 'review', 'init')), str(sorted(cmds)))
+    check('в меню «/» есть /fix /tests /explain /commit /agents /chisle /remember и встроенные /review /init', all(n in cmds for n in ('fix', 'tests', 'explain', 'commit', 'agents', 'chisle', 'remember', 'review', 'init')), str(sorted(cmds)))
     check('описание команды по-русски', 'тест' in cmds.get('fix', {}).get('description', ''), str(cmds.get('fix')))
     cfg = api('GET', '/config')
     check('модель по умолчанию — первая из списка шлюза (своя fake/m не применена)', cfg.get('model') == 'codary/glm-5.3', str(cfg.get('model')))
     check('enabled_providers = [codary]', cfg.get('enabled_providers') == ['codary'], str(cfg.get('enabled_providers')))
 
     print('2. Запрос идёт через шлюз с токеном и сведениями об устройстве')
+    os.makedirs(PROJ + '/.codary', exist_ok=True); open(PROJ + '/.codary/index.md', 'w').write('- notes/x.md — МАРКЕР-ПАМЯТИ-42\n')
     sid = api('POST', '/session', {'title': 't'})['id']
     r = api('POST', f'/session/{sid}/message', {'model': {'providerID': 'codary', 'modelID': 'glm-5.3'}, 'parts': [{'type': 'text', 'text': 'привет'}]}, timeout=90)
     text = ''.join(p.get('text', '') for p in r.get('parts', []) if p.get('type') == 'text')
@@ -75,6 +76,7 @@ try:
     calls = api('GET', '/_calls', port=GW)
     chat = [c for c in calls if c['path'] == '/v1/chat/completions']
     check('шлюз получил токен устройства и имя модели', bool(chat) and chat[-1]['auth'] == 'Bearer sk-cdr-test-token' and chat[-1]['model'] == 'glm-5.3', str(chat)[-300:])
+    check('индекс памяти проекта .codary/index.md и правила ведения папки доходят до модели', bool(chat) and 'МАРКЕР-ПАМЯТИ-42' in chat[-1].get('system', '') and 'Память проекта (.codary/)' in chat[-1].get('system', ''), chat[-1].get('system', '')[-200:] if chat else '')
     check('правила chisle (краткий режим) доходят до модели в системной подсказке', bool(chat) and 'Chisle: максимум смысла' in chat[-1].get('system', ''), chat[-1].get('system', '')[:120] if chat else '')
     listing = [c for c in calls if c['path'] == '/v1/models']
     check('запрос списка моделей сообщил платформу и версию', bool(listing) and listing[0]['platform'] == 'mac' and listing[0]['version'] == '1.2.0', str(listing)[:200])
