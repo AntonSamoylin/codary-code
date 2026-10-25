@@ -67,6 +67,7 @@ npx electron-builder --mac --arm64 --publish never --config electron-builder.con
 ## Сборка без GitHub Actions (если Actions недоступны)
 
 * Mac: `./scripts/build-mac.sh arm64` и `./scripts/build-mac.sh x64` на Mac (x64 собирается кросс-сборкой на Apple-чипе); результат в `out/`.
+* Всё сразу: `WIN_SSH='ssh user@host' ./scripts/release-local.sh` — проверка сервера приложения, Mac (оба чипа), Windows на сервере с докачкой и сверкой sha512; результат в `out/v<версия>/` с `SHA256SUMS.txt`. Ничего не публикует; без `WIN_SSH` Windows пропускается. Работает только с закоммиченным и отправленным кодом.
 * Windows: `./scripts/build-win-docker.sh` на Linux-сервере с Docker (образ `electronuserland/builder:wine`, Node 24 и Wine внутри). Памяти нужно около 4–5 ГБ.
   Если сборка падает на «Could not resolve …» после прерванной установки — удалите том кэша: `docker volume rm codary-bun-cache`.
 
