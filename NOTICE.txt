@@ -9,3 +9,6 @@ OpenCode-hosted provider promotions and update channels, and build configuration
 The patch set is published together with the build scripts in the Codary Code repository.
 
 "OpenCode" is a name of its respective owners and is not used to promote this product.
+
+The built-in concise answer style ("chisle") is adapted from the Chisle skill (https://github.com/JayPokale/Chisle),
+Copyright (c) 2026 Jay Pokale, distributed under the MIT License.

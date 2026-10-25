@@ -5,6 +5,7 @@ import { startScheduler } from "./scheduler"
 import { startTelegram } from "./telegram"
 import { tools } from "./tools"
 import { codaryCommands, codaryConfig } from "./account"
+import { CHISLE_RULES, chisleEnabled } from "./chisle"
 
 export async function CodaryPlugin(input: PluginInput): Promise<Hooks> {
   if (process.env.CODARY_DISABLE_PLUGIN) return {}
@@ -20,6 +21,9 @@ export async function CodaryPlugin(input: PluginInput): Promise<Hooks> {
       await codaryConfig(config)
     },
     tool: tools,
+    "experimental.chat.system.transform": async (_input, output) => {
+      if (await chisleEnabled()) output.system.push(CHISLE_RULES)
+    },
     event: async ({ event }) => emit({ type: event.type, properties: (event as any).properties }),
   }
 }

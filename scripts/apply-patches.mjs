@@ -400,6 +400,26 @@ edit('packages/app/src/pages/new-session/new-session-view.tsx', [
 ])
 edit('packages/app/src/context/settings.tsx', [['    permissions: true,\n    errors: false,\n  },', '    permissions: true,\n    errors: true,\n  },']])
 
+// ---------------------------------------------------------------- группы чатов на главном экране (brand/desktop/codary-groups.tsx)
+copyFileSync(join(BRAND, 'desktop', 'codary-groups.tsx'), p('packages/app/src/components/codary-groups.tsx'))
+edit('packages/app/src/pages/home/home-sessions-view.tsx', [
+  ['import { type Accessor, createMemo, For, Show, Suspense } from "solid-js"\n',
+   'import { type Accessor, createEffect, createMemo, For, Show, Suspense } from "solid-js"\nimport { CodaryEmptyGroup, CodaryGroupBar, CodaryRowBadge, CodaryRowMenu, codaryFilter, codaryNoteCreate, codaryTrack } from "@/components/codary-groups"\n'],
+  ['export function HomeSessionsView(props: HomeSessionsViewProps) {\n  return (\n',
+   'export function HomeSessionsView(props: HomeSessionsViewProps) {\n  const shown = createMemo(() => codaryFilter(props.groups()))\n  createEffect(() => codaryTrack(props.groups()))\n  return (\n'],
+  ['                onClick={props.onCreateSession}\n              >\n                {props.language.t("command.session.new")}',
+   '                onClick={() => {\n                  codaryNoteCreate(props.groups())\n                  props.onCreateSession()\n                }}\n              >\n                {props.language.t("command.session.new")}'],
+  ['      <div class="-mr-3 min-h-[calc(100cqh-72px)] lg:min-h-[calc(100cqh-96px)]">\n        <Suspense\n',
+   '      <div class="-mr-3 min-h-[calc(100cqh-72px)] lg:min-h-[calc(100cqh-96px)]">\n        <CodaryGroupBar />\n        <Suspense\n'],
+  ['            <div ref={props.onSetContent} class="flex flex-col pt-3 pr-3 pb-16">\n              <For each={props.groups()}>',
+   '            <div ref={props.onSetContent} class="flex flex-col pt-3 pr-3 pb-16">\n              <Show when={shown().length === 0}>\n                <CodaryEmptyGroup />\n              </Show>\n              <For each={shown()}>'],
+  ['index() === props.groups().length - 1 ? "" : "mb-6"', 'index() === shown().length - 1 ? "" : "mb-6"'],
+  ['        <HomeSessionTitle title={title()} showProjectName={!!showProjectName()} />\n',
+   '        <HomeSessionTitle title={title()} showProjectName={!!showProjectName()} />\n        <CodaryRowBadge sessionID={props.record.session.id} />\n'],
+  ['      <Show when={SHOW_HOME_SESSION_ARCHIVE}>\n        <div\n          class={`\n            hover-reveal absolute right-1.5',
+   '      <CodaryRowMenu sessionID={props.record.session.id} />\n      <Show when={SHOW_HOME_SESSION_ARCHIVE}>\n        <div\n          class={`\n            hover-reveal absolute right-1.5'],
+])
+
 // ---------------------------------------------------------------- переводы: «OpenCode» -> «Codary Code» (только в словарях строк)
 {
   const dirs = ['packages/app/src/i18n', 'packages/ui/src/i18n', 'packages/desktop/src/renderer/i18n']

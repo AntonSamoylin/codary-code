@@ -4,6 +4,7 @@ import { tool } from "@opencode-ai/plugin"
 import { loadSchedules, loadTelegram, updateSchedules, type Schedule } from "./store"
 import { describe, fmt, nextRunAfter, validateSpec } from "./time"
 import { enqueue } from "./scheduler"
+import { chisleEnabled, setChisle } from "./chisle"
 
 const z = tool.schema
 
@@ -13,6 +14,18 @@ function line(s: Schedule) {
 }
 
 export const tools = {
+  chisle_mode: tool({
+    description:
+      "Switch Codary's concise answer style (chisle) on or off for all chats, or report its state. Call it only when the user runs /chisle or explicitly asks to turn the terse style on or off.",
+    args: { mode: z.enum(["on", "off", "status"]).describe("on, off or status") },
+    async execute(args) {
+      if (args.mode === "on") await setChisle(true)
+      if (args.mode === "off") await setChisle(false)
+      const on = await chisleEnabled()
+      return `Режим chisle (краткие ответы): ${on ? "включён" : "выключен"}. ${on ? "Выключить: /chisle off." : "Включить: /chisle on."} Действует на новые запросы.`
+    },
+  }),
+
   schedule_create: tool({
     description:
       "Create a recurring task for Codary Code to run automatically while the app is open (for example: check tests every morning, summarize new commits every hour). " +

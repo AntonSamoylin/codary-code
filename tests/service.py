@@ -61,7 +61,7 @@ try:
     check('цена в названии модели (вход/выход, ₽ за 1 млн)', models.get('glm-5.3', {}).get('name') == 'GLM 5.3 · 149/469 ₽', str(models.get('glm-5.3', {}).get('name')))
     check('у модели без цены (подписка) в названии цены нет', claude.get('name') == 'Claude Sonnet 4.5', str(claude.get('name')))
     cmds = {c['name']: c for c in api('GET', '/command')}
-    check('в меню «/» есть /fix /tests /explain /commit /agents и встроенные /review /init', all(n in cmds for n in ('fix', 'tests', 'explain', 'commit', 'agents', 'review', 'init')), str(sorted(cmds)))
+    check('в меню «/» есть /fix /tests /explain /commit /agents /chisle и встроенные /review /init', all(n in cmds for n in ('fix', 'tests', 'explain', 'commit', 'agents', 'chisle', 'review', 'init')), str(sorted(cmds)))
     check('описание команды по-русски', 'тест' in cmds.get('fix', {}).get('description', ''), str(cmds.get('fix')))
     cfg = api('GET', '/config')
     check('модель по умолчанию — первая из списка шлюза (своя fake/m не применена)', cfg.get('model') == 'codary/glm-5.3', str(cfg.get('model')))
@@ -75,8 +75,17 @@ try:
     calls = api('GET', '/_calls', port=GW)
     chat = [c for c in calls if c['path'] == '/v1/chat/completions']
     check('шлюз получил токен устройства и имя модели', bool(chat) and chat[-1]['auth'] == 'Bearer sk-cdr-test-token' and chat[-1]['model'] == 'glm-5.3', str(chat)[-300:])
+    check('правила chisle (краткий режим) доходят до модели в системной подсказке', bool(chat) and 'Chisle: максимум смысла' in chat[-1].get('system', ''), chat[-1].get('system', '')[:120] if chat else '')
     listing = [c for c in calls if c['path'] == '/v1/models']
     check('запрос списка моделей сообщил платформу и версию', bool(listing) and listing[0]['platform'] == 'mac' and listing[0]['version'] == '1.2.0', str(listing)[:200])
+
+    flag = os.path.join(T, 'data', 'opencode', 'codary', 'chisle-off')
+    os.makedirs(os.path.dirname(flag), exist_ok=True); open(flag, 'w').write('off\n')
+    sid2 = api('POST', '/session', {'title': 't2'})['id']
+    api('POST', f'/session/{sid2}/message', {'model': {'providerID': 'codary', 'modelID': 'glm-5.3'}, 'parts': [{'type': 'text', 'text': 'ещё'}]}, timeout=90)
+    chat2 = [c for c in api('GET', '/_calls', port=GW) if c['path'] == '/v1/chat/completions']
+    check('флаг chisle-off отключает правила (в следующем запросе их нет)', len(chat2) > len(chat) and 'Chisle: максимум смысла' not in chat2[-1].get('system', ''), chat2[-1].get('system', '')[:100])
+    os.remove(flag)
 
     print('3. Чужие ключи не принимаются')
     r = api('PUT', '/auth/openai', {'type': 'api', 'key': 'sk-user-key'})

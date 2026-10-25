@@ -25,7 +25,7 @@ class H(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers.get('content-length', 0))) or b'{}')
         if self.path == '/_models': state['models'] = body; return self.send(200, {})
         if self.path == '/v1/chat/completions':
-            state['calls'].append({'path': self.path, 'auth': self.headers.get('authorization'), 'model': body.get('model'), 'platform': self.headers.get('x-codary-platform')})
+            state['calls'].append({'path': self.path, 'auth': self.headers.get('authorization'), 'model': body.get('model'), 'system': ' '.join(m.get('content') if isinstance(m.get('content'), str) else '' for m in body.get('messages', []) if m.get('role') == 'system'), 'platform': self.headers.get('x-codary-platform')})
             if not self.authed(): return self.send(401, {'error': {'message': 'Неверный токен'}})
             self.send_response(200); self.send_header('content-type', 'text/event-stream'); self.end_headers()
             base = {'id': 'c1', 'object': 'chat.completion.chunk', 'model': body.get('model')}
