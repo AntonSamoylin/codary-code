@@ -160,6 +160,9 @@ function AccountPill(props: { state: CodaryAuthState }) {
   const api = window.api.codaryAuth
   const [pay, setPay] = createSignal(false)
   const [menu, setMenu] = createSignal(false)
+  const [limitEdit, setLimitEdit] = createSignal(false)
+  const [limitText, setLimitText] = createSignal("")
+  const [limitError, setLimitError] = createSignal("")
   const account = () => props.state.account
   const kind = (): "ok" | "low" | "empty" | "blocked" => {
     const current = account()
@@ -190,8 +193,19 @@ function AccountPill(props: { state: CodaryAuthState }) {
     const parts = [`Остаток: ${rub(current.balanceRub)}`]
     if (current.todayRub) parts.push(`Сегодня потрачено: ${rub(current.todayRub)}`)
     if (current.avgRub) parts.push(`Средний запрос: ${rub(current.avgRub)}`)
+    if (current.dailyLimitRub) parts.push(`Лимит в день: ${rub(current.dailyLimitRub)}`)
     if (current.left) parts.push(`Хватит примерно на ${current.left} запросов`)
     return parts.join("\n")
+  }
+  const limitReached = () => {
+    const current = account()
+    return !!current?.dailyLimitRub && current.todayRub !== undefined && current.todayRub >= current.dailyLimitRub
+  }
+  const saveLimit = async (value: number | null) => {
+    setLimitError("")
+    const result = await api.setLimit(value)
+    if (result.ok) setLimitEdit(false)
+    else setLimitError(result.error ?? "Не удалось сохранить.")
   }
   onMount(() => {
     const close = () => setMenu(false)
@@ -225,6 +239,12 @@ function AccountPill(props: { state: CodaryAuthState }) {
         <Show when={kind() === "ok" && (account()?.todayRub ?? 0) > 0}>
           <span style={{ "font-weight": "400", color: "var(--text-weak, #888)" }} title={details()}>
             · сегодня −{rub(account()?.todayRub ?? 0)}
+            {account()?.dailyLimitRub ? ` из ${rub(account()?.dailyLimitRub ?? 0)}` : ""}
+          </span>
+        </Show>
+        <Show when={limitReached()}>
+          <span style={{ color: "#d97706", "font-weight": "700" }} title={details()}>
+            · дневной лимит исчерпан
           </span>
         </Show>
         <Show when={kind() !== "blocked"}>
@@ -254,6 +274,43 @@ function AccountPill(props: { state: CodaryAuthState }) {
               "flex-direction": "column",
             }}
           >
+            <button
+              style={{ ...link, "text-decoration": "none", "text-align": "left", padding: "8px 10px", "font-size": "13px", color: "var(--text-base, #222)" }}
+              onClick={() => {
+                setLimitText(String(account()?.dailyLimitRub ?? ""))
+                setLimitError("")
+                setLimitEdit(!limitEdit())
+              }}
+            >
+              {account()?.dailyLimitRub ? `Лимит в день: ${rub(account()?.dailyLimitRub ?? 0)}` : "Задать лимит расхода в день"}
+            </button>
+            <Show when={limitEdit()}>
+              <div style={{ display: "flex", gap: "6px", padding: "4px 10px 8px", "align-items": "center", "flex-wrap": "wrap" }}>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="₽ в день"
+                  value={limitText()}
+                  onInput={(event) => setLimitText(event.currentTarget.value)}
+                  onKeyDown={(event) => event.key === "Enter" && void saveLimit(Number(limitText()))}
+                  style={{ width: "92px", padding: "5px 8px", "border-radius": "8px", border: "1px solid var(--border-weak-base, rgba(127,127,127,.4))", background: "transparent", color: "inherit", "font-size": "13px" }}
+                />
+                <button style={{ ...primary, padding: "5px 10px", "font-size": "12px" }} onClick={() => void saveLimit(Number(limitText()))}>
+                  Сохранить
+                </button>
+                <Show when={account()?.dailyLimitRub}>
+                  <button style={{ ...link, "font-size": "12px" }} onClick={() => void saveLimit(null)}>
+                    Снять
+                  </button>
+                </Show>
+                <Show when={limitError()}>
+                  <span style={{ color: "#d33", "font-size": "12px", width: "100%" }}>{limitError()}</span>
+                </Show>
+              </div>
+            </Show>
+            <button style={{ ...link, "text-decoration": "none", "text-align": "left", padding: "8px 10px", "font-size": "13px", color: "var(--text-base, #222)" }} onClick={() => void api.cloud()}>
+              Открыть в облаке
+            </button>
             <button style={{ ...link, "text-decoration": "none", "text-align": "left", padding: "8px 10px", "font-size": "13px", color: "var(--text-base, #222)" }} onClick={() => void api.devices()}>
               Мои устройства
             </button>

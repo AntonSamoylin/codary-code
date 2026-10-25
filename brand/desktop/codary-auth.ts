@@ -113,17 +113,36 @@ export async function refreshAccount(force = false) {
     const response = await fetch(`${API}/v1/me`, { headers: { Authorization: `Bearer ${token}`, ...clientHeaders() }, signal: AbortSignal.timeout(15_000) })
     if (response.status === 401) return void (await clearLocal("Это устройство отключено. Войдите снова."))
     if (!response.ok) return
-    const data = (await response.json()) as { status?: string; balance_rub?: number; today_rub?: number; avg_request_rub?: number; requests_left?: number | null }
+    const data = (await response.json()) as { status?: string; balance_rub?: number; today_rub?: number; avg_request_rub?: number; requests_left?: number | null; daily_limit_rub?: number | null }
     account = {
       status: String(data.status ?? "active"),
       balanceRub: Number(data.balance_rub ?? 0),
       todayRub: Number(data.today_rub ?? 0),
       avgRub: Number(data.avg_request_rub ?? 0),
       left: data.requests_left ?? null,
+      dailyLimitRub: data.daily_limit_rub ?? null,
     }
     broadcast()
   } catch {
     // нет сети: оставляем прежнее состояние
+  }
+}
+
+/** Личный дневной лимит расхода (рубли за сутки по Москве; null — снять). Хранит и проверяет шлюз, поэтому действует на всех устройствах и в облаке. */
+export async function codarySetLimit(limitRub: number | null): Promise<{ ok: boolean; error?: string }> {
+  if (!token) return { ok: false, error: "Войдите в аккаунт." }
+  try {
+    const response = await fetch(`${API}/v1/me/limit`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...clientHeaders() },
+      body: JSON.stringify({ daily_rub: limitRub }),
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!response.ok) return { ok: false, error: ((await response.json().catch(() => null)) as any)?.error?.message ?? "Не удалось сохранить лимит." }
+    await refreshAccount(true)
+    return { ok: true }
+  } catch {
+    return { ok: false, error: "Нет связи с сервером." }
   }
 }
 
@@ -310,6 +329,8 @@ export function registerCodaryAuth() {
   ipcMain.handle("codary-auth:cancel", () => codaryCancel())
   ipcMain.handle("codary-auth:logout", () => codaryLogout())
   ipcMain.handle("codary-auth:devices", () => void shell.openExternal(`${SITE}/code-login.php`))
+  ipcMain.handle("codary-auth:cloud", () => void shell.openExternal(`${SITE}/code-cloud.php`))
+  ipcMain.handle("codary-auth:setLimit", (_event, limitRub: number | null) => codarySetLimit(limitRub))
   ipcMain.handle("codary-auth:pay", (_event, amount: number) => codaryPay(amount))
   ipcMain.handle("codary-auth:refresh", async () => {
     await refreshAccount()

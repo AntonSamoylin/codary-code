@@ -263,7 +263,7 @@ edit('packages/desktop/src/preload/types.ts', [
   state: "out" | "waiting" | "in"
   code?: string
   message?: string
-  account?: { status: string; balanceRub: number; todayRub?: number; avgRub?: number; left?: number | null }
+  account?: { status: string; balanceRub: number; todayRub?: number; avgRub?: number; left?: number | null; dailyLimitRub?: number | null }
 }
 
 export type ServerReadyData = {`],
@@ -274,6 +274,8 @@ export type ServerReadyData = {`],
     cancel: () => Promise<CodaryAuthState>
     logout: () => Promise<CodaryAuthState>
     devices: () => Promise<void>
+    cloud: () => Promise<void>
+    setLimit: (limitRub: number | null) => Promise<{ ok: boolean; error?: string }>
     pay: (amountRub: number) => Promise<{ ok: boolean; error?: string }>
     refresh: () => Promise<CodaryAuthState>
     onChange: (cb: (state: CodaryAuthState) => void) => () => void
@@ -288,6 +290,8 @@ edit('packages/desktop/src/preload/index.ts', [
     cancel: () => ipcRenderer.invoke("codary-auth:cancel"),
     logout: () => ipcRenderer.invoke("codary-auth:logout"),
     devices: () => ipcRenderer.invoke("codary-auth:devices"),
+    cloud: () => ipcRenderer.invoke("codary-auth:cloud"),
+    setLimit: (limitRub) => ipcRenderer.invoke("codary-auth:setLimit", limitRub),
     pay: (amount) => ipcRenderer.invoke("codary-auth:pay", amount),
     refresh: () => ipcRenderer.invoke("codary-auth:refresh"),
     onChange: (cb) => {
@@ -387,6 +391,14 @@ edit('packages/app/src/components/dialog-manage-models.tsx', [
   ['      action={\n        <Button class="h-7 -my-1 text-14-medium" icon="plus-small" tabIndex={-1} onClick={handleConnectProvider}>\n          {language.t("command.provider.connect")}\n        </Button>\n      }\n', ''],
   ['        <ButtonV2 variant="neutral" icon="plus" onClick={handleConnectProvider}>\n          {language.t("command.provider.connect")}\n        </ButtonV2>\n', ''],
 ])
+
+// ---------------------------------------------------------------- стартовые подсказки на пустом экране нового сеанса, уведомления об ошибках по умолчанию
+copyFileSync(join(BRAND, 'desktop', 'codary-starters.tsx'), p('packages/app/src/components/codary-starters.tsx'))
+edit('packages/app/src/pages/new-session/new-session-view.tsx', [
+  ['import { PromptInputV2Composer } from "@/components/prompt-input-v2"\n', 'import { PromptInputV2Composer } from "@/components/prompt-input-v2"\nimport { CodaryStarters } from "@/components/codary-starters"\n'],
+  ['              <PromptInputV2Composer controller={props.input} />\n', '              <PromptInputV2Composer controller={props.input} />\n              <CodaryStarters onDone={props.input.restoreFocus} />\n'],
+])
+edit('packages/app/src/context/settings.tsx', [['    permissions: true,\n    errors: false,\n  },', '    permissions: true,\n    errors: true,\n  },']])
 
 // ---------------------------------------------------------------- переводы: «OpenCode» -> «Codary Code» (только в словарях строк)
 {
