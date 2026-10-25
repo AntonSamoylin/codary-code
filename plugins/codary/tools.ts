@@ -5,6 +5,8 @@ import { loadSchedules, loadTelegram, updateSchedules, type Schedule } from "./s
 import { describe, fmt, nextRunAfter, validateSpec } from "./time"
 import { enqueue } from "./scheduler"
 import { chisleEnabled, setChisle } from "./chisle"
+import { spawn } from "node:child_process"
+import { appendDaily, checkMemory, readNote, reindex, rootOf, saveNote, searchNotes, TYPES } from "./memory-store"
 
 const z = tool.schema
 
@@ -14,6 +16,54 @@ function line(s: Schedule) {
 }
 
 export const tools = {
+  memory: tool({
+    description:
+      "Long-term memory as Obsidian-compatible markdown notes (frontmatter, [[wikilinks]], #tags). scope=project: <project>/.codary/ (decisions, how-tos, gotchas, agreements); scope=user: ~/.codary/ (the user's preferences and facts, shared by all projects). " +
+      "Actions: save (one idea per note; existing notes are appended to unless mode=replace, which keeps a copy), read, search (query and/or tags), daily (append a line to today's journal), check (broken links, duplicates, stale notes, tag typos, secrets), open (open the folder as an Obsidian vault). " +
+      "Never store passwords, keys, tokens or personal data. Search or read before relying on memory; keep summaries to one line.",
+    args: {
+      action: z.enum(["save", "read", "search", "daily", "check", "open"]).describe("What to do"),
+      scope: z.enum(["project", "user"]).optional().describe("project (default) or user"),
+      note: z.string().optional().describe("save/read: note title or name"),
+      text: z.string().max(20000).optional().describe("save/daily: note text (markdown, may contain [[links]]); for save only the new content"),
+      summary: z.string().max(200).optional().describe("save: one-line summary shown in the index"),
+      type: z.enum(TYPES).optional().describe("save: decision, howto, gotcha, reference, preference, handoff or note"),
+      tags: z.array(z.string()).optional().describe("save/search: tags without #"),
+      mode: z.enum(["append", "replace"]).optional().describe("save: append (default for existing notes) or replace (old version is kept in .trash)"),
+      query: z.string().optional().describe("search: words to look for"),
+    },
+    async execute(args, ctx) {
+      const scope = args.scope ?? "project"
+      const root = rootOf(scope, ctx.directory)
+      const label = scope === "user" ? "Личная память" : "Память проекта"
+      switch (args.action) {
+        case "save": {
+          if (!args.note || !args.text) return "Для save нужны note (название) и text."
+          return (await saveNote(root, { title: args.note, text: args.text, summary: args.summary, type: args.type, tags: args.tags, mode: args.mode })).message
+        }
+        case "read":
+          return args.note ? await readNote(root, args.note) : "Для read нужен note."
+        case "search":
+          return await searchNotes(root, args.query ?? "", args.tags ?? [])
+        case "daily":
+          return args.text ? await appendDaily(root, args.text) : "Для daily нужен text."
+        case "check":
+          return await checkMemory(root)
+        case "open": {
+          await reindex(root, label)
+          const uri = `obsidian://open?path=${encodeURIComponent(root)}`
+          if (process.env.CODARY_APP_PLATFORM === "cloud") return `Папка памяти: ${root}. В облаке Obsidian не запустить: скачайте папку или откройте её в Obsidian на своём компьютере.`
+          await ctx.ask({ permission: "memory_open", patterns: [root], always: [], metadata: { folder: root } })
+          const [cmd, argv] = process.platform === "darwin" ? ["open", [uri]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", uri]] : ["xdg-open", [uri]]
+          try {
+            spawn(cmd, argv, { detached: true, stdio: "ignore" }).on("error", () => {}).unref()
+          } catch {}
+          return `Открываю папку ${root} в Obsidian (если он установлен; при первом открытии он спросит, доверять ли хранилищу). Ссылка: ${uri}`
+        }
+      }
+    },
+  }),
+
   chisle_mode: tool({
     description:
       "Switch Codary's concise answer style (chisle) on or off for all chats, or report its state. Call it only when the user runs /chisle or explicitly asks to turn the terse style on or off.",

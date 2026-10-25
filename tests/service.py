@@ -61,7 +61,7 @@ try:
     check('цена в названии модели (вход/выход, ₽ за 1 млн)', models.get('glm-5.3', {}).get('name') == 'GLM 5.3 · 149/469 ₽', str(models.get('glm-5.3', {}).get('name')))
     check('у модели без цены (подписка) в названии цены нет', claude.get('name') == 'Claude Sonnet 4.5', str(claude.get('name')))
     cmds = {c['name']: c for c in api('GET', '/command')}
-    check('в меню «/» есть /fix /tests /explain /commit /agents /chisle /remember и встроенные /review /init', all(n in cmds for n in ('fix', 'tests', 'explain', 'commit', 'agents', 'chisle', 'remember', 'review', 'init')), str(sorted(cmds)))
+    check('в меню «/» есть /fix /tests /explain /commit /agents /chisle /remember /handoff /memory-check /vault и встроенные /review /init', all(n in cmds for n in ('fix', 'tests', 'explain', 'commit', 'agents', 'chisle', 'remember', 'handoff', 'memory-check', 'vault', 'review', 'init')), str(sorted(cmds)))
     check('описание команды по-русски', 'тест' in cmds.get('fix', {}).get('description', ''), str(cmds.get('fix')))
     cfg = api('GET', '/config')
     check('модель по умолчанию — первая из списка шлюза (своя fake/m не применена)', cfg.get('model') == 'codary/glm-5.3', str(cfg.get('model')))
@@ -80,11 +80,19 @@ try:
         c = chat[-1]; tools = sorted(c['tools'], key=lambda x: -x[1])
         print('  ЗАМЕР: system', len(c['system']), 'симв.; tools', sum(n for _, n in tools), 'симв. в', len(tools), 'шт.; сообщения', c['msg_chars'], 'симв.')
         print('  ЗАМЕР: крупнейшие инструменты:', ', '.join(f'{a}={b}' for a, b in tools[:12]))
-    check('индекс памяти проекта .codary/index.md и правила ведения папки доходят до модели', bool(chat) and 'МАРКЕР-ПАМЯТИ-42' in chat[-1].get('system', '') and 'Память проекта (.codary/)' in chat[-1].get('system', ''), chat[-1].get('system', '')[-200:] if chat else '')
+    check('индекс памяти проекта .codary/index.md и правила ведения папки доходят до модели', bool(chat) and 'МАРКЕР-ПАМЯТИ-42' in chat[-1].get('system', '') and 'Память (инструмент memory)' in chat[-1].get('system', ''), chat[-1].get('system', '')[-200:] if chat else '')
     check('правила chisle (краткий режим) доходят до модели в системной подсказке', bool(chat) and 'Chisle: максимум смысла' in chat[-1].get('system', ''), chat[-1].get('system', '')[:120] if chat else '')
     listing = [c for c in calls if c['path'] == '/v1/models']
     check('запрос списка моделей сообщил платформу и версию', bool(listing) and listing[0]['platform'] == 'mac' and listing[0]['version'] == '1.2.0', str(listing)[:200])
 
+    # инструмент memory работает на настоящем сервере: модель просит сохранить заметку -> файл Obsidian-формата и оглавление появились
+    api('POST', '/_tool', {'name': 'memory', 'args': {'action': 'save', 'note': 'Проверка памяти', 'text': 'Факт для теста. Связано: [[нет-такой]]', 'type': 'decision', 'tags': ['Тест'], 'summary': 'проверочная заметка'}}, port=GW)
+    api('POST', f"/session/{api('POST', '/session', {'title': 'mem'})['id']}/message", {'model': {'providerID': 'codary', 'modelID': 'glm-5.3'}, 'parts': [{'type': 'text', 'text': 'запомни'}]}, timeout=90)
+    note_file = PROJ + '/.codary/notes/проверка-памяти.md'
+    note_txt = open(note_file, encoding='utf8').read() if os.path.exists(note_file) else ''
+    check('инструмент memory сохранил заметку (шапка Obsidian, теги, тип)', 'type: decision' in note_txt and 'tags: [тест]' in note_txt and 'Факт для теста' in note_txt, note_txt[:200])
+    idx_txt = open(PROJ + '/.codary/index.md', encoding='utf8').read()
+    check('оглавление перестроено и сохранило текст пользователя', 'МАРКЕР-ПАМЯТИ-42' in idx_txt and '[[проверка-памяти]] — проверочная заметка' in idx_txt, idx_txt[-300:])
     # отказ поставщика по балансу приходит кодом 424 — приложение не должно повторять запрос, а 5xx оно повторяет (так и задумано для сбоев сети)
     def chat_calls(): return len([c for c in api('GET', '/_calls', port=GW) if c['path'] == '/v1/chat/completions'])
     def timed_message(session_id, seconds):

@@ -24,10 +24,20 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get('content-length', 0))) or b'{}')
         if self.path == '/_models': state['models'] = body; return self.send(200, {})
+        if self.path == '/_tool': state['tool_call'] = body or None; return self.send(200, {})        # {"name": "memory", "args": {...}} — следующий ответ модели вызывает этот инструмент
         if self.path == '/_error': state['error'] = body or None; return self.send(200, {})      # {"status": 424, "code": "x"} — отвечать ошибкой; {} — снять
         if self.path == '/v1/chat/completions':
             state['calls'].append({'path': self.path, 'auth': self.headers.get('authorization'), 'tools': [(t.get('function', {}).get('name'), len(json.dumps(t, ensure_ascii=False))) for t in (body.get('tools') or [])], 'msg_chars': sum(len(json.dumps(m.get('content'), ensure_ascii=False)) for m in body.get('messages', []) if m.get('role') != 'system'), 'model': body.get('model'), 'system': ' '.join(m.get('content') if isinstance(m.get('content'), str) else '' for m in body.get('messages', []) if m.get('role') == 'system'), 'platform': self.headers.get('x-codary-platform')})
             if not self.authed(): return self.send(401, {'error': {'message': 'Неверный токен'}})
+            last = (body.get('messages') or [{}])[-1]
+            if state.get('tool_call') and last.get('role') != 'tool':
+                tc, state['tool_call'] = state['tool_call'], None
+                self.send_response(200); self.send_header('content-type', 'text/event-stream'); self.end_headers()
+                base = {'id': 'c2', 'object': 'chat.completion.chunk', 'model': body.get('model')}
+                for o in ({**base, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'tool_calls': [{'index': 0, 'id': 'call_t1', 'type': 'function', 'function': {'name': tc['name'], 'arguments': json.dumps(tc['args'], ensure_ascii=False)}}]}}]},
+                          {**base, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'tool_calls'}], 'usage': {'prompt_tokens': 5, 'completion_tokens': 2, 'total_tokens': 7}}):
+                    self.wfile.write(('data: ' + json.dumps(o) + '\n\n').encode()); self.wfile.flush()
+                self.wfile.write(b'data: [DONE]\n\n'); self.wfile.flush(); return
             if state.get('error'): return self.send(state['error']['status'], {'error': {'message': 'Тестовая ошибка шлюза', 'code': state['error'].get('code', 'x'), 'type': 'api_error'}})
             self.send_response(200); self.send_header('content-type', 'text/event-stream'); self.end_headers()
             base = {'id': 'c1', 'object': 'chat.completion.chunk', 'model': body.get('model')}
