@@ -81,6 +81,24 @@ try:
     listing = [c for c in calls if c['path'] == '/v1/models']
     check('запрос списка моделей сообщил платформу и версию', bool(listing) and listing[0]['platform'] == 'mac' and listing[0]['version'] == '1.2.0', str(listing)[:200])
 
+    # отказ поставщика по балансу приходит кодом 424 — приложение не должно повторять запрос, а 5xx оно повторяет (так и задумано для сбоев сети)
+    def chat_calls(): return len([c for c in api('GET', '/_calls', port=GW) if c['path'] == '/v1/chat/completions'])
+    def timed_message(session_id, seconds):
+        t0 = time.time(); before = chat_calls()
+        try:
+            api('POST', f'/session/{session_id}/message', {'model': {'providerID': 'codary', 'modelID': 'glm-5.3'}, 'parts': [{'type': 'text', 'text': 'ошибка'}]}, timeout=seconds)
+            done = True
+        except Exception:
+            done = False
+        return done, chat_calls() - before, round(time.time() - t0, 1)
+    api('POST', '/_error', {'status': 424, 'code': 'provider_unavailable'}, port=GW)
+    done424, calls424, t424 = timed_message(api('POST', '/session', {'title': 'e424'})['id'], 25)
+    check('отказ 424 показан сразу, без повторов (1 запрос к шлюзу)', done424 and calls424 == 1 and t424 < 12, f'завершён={done424}, запросов={calls424}, {t424} с')
+    api('POST', '/_error', {'status': 503, 'code': 'upstream_unavailable'}, port=GW)
+    done503, calls503, t503 = timed_message(api('POST', '/session', {'title': 'e503'})['id'], 14)
+    check('для сравнения: 503 приложение повторяет (за 14 с больше одного запроса, ответа ещё нет)', (not done503) and calls503 >= 2, f'завершён={done503}, запросов={calls503}, {t503} с')
+    api('POST', '/_error', {}, port=GW)
+
     flag = os.path.join(T, 'data', 'opencode', 'codary', 'chisle-off')
     os.makedirs(os.path.dirname(flag), exist_ok=True); open(flag, 'w').write('off\n')
     sid2 = api('POST', '/session', {'title': 't2'})['id']
