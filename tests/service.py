@@ -41,7 +41,7 @@ try:
     user_cfg = {'provider': {'fake': {'npm': '@ai-sdk/openai-compatible', 'name': 'fake', 'options': {'baseURL': 'http://127.0.0.1:1/v1', 'apiKey': 'x'}, 'models': {'m': {'name': 'm'}}}},
                 'model': 'fake/m', 'autoupdate': False, 'share': 'disabled'}
     json.dump(user_cfg, open(T + '/config/opencode/opencode.json', 'w'))        # «свой» провайдер в конфигурации пользователя
-    env = {**os.environ, 'XDG_DATA_HOME': T + '/data', 'XDG_CONFIG_HOME': T + '/config', 'XDG_CACHE_HOME': T + '/cache', 'XDG_STATE_HOME': T + '/state',
+    env = {**os.environ, 'XDG_DATA_HOME': T + '/data', 'XDG_CONFIG_HOME': T + '/config', 'XDG_CACHE_HOME': T + '/cache', 'XDG_STATE_HOME': T + '/state', 'CODARY_CURATOR_DEBOUNCE_MS': '2500', 'CODARY_CURATOR_MIN_CHARS': '20',
            'CODARY_RESTRICT_PROVIDERS': '1', 'CODARY_API_URL': f'http://127.0.0.1:{GW}', 'CODARY_APP_VERSION': '1.2.0', 'CODARY_APP_PLATFORM': 'mac',
            'OPENCODE_DISABLE_AUTOUPDATE': '1', 'OPENAI_API_KEY': 'sk-env-openai', 'ANTHROPIC_API_KEY': 'sk-env-anthropic'}      # ключи из окружения тоже не должны работать
     log = open(os.path.join(T, 'server.log'), 'w')
@@ -61,7 +61,7 @@ try:
     check('цена в названии модели (вход/выход, ₽ за 1 млн)', models.get('glm-5.3', {}).get('name') == 'GLM 5.3 · 149/469 ₽', str(models.get('glm-5.3', {}).get('name')))
     check('у модели без цены (подписка) в названии цены нет', claude.get('name') == 'Claude Sonnet 4.5', str(claude.get('name')))
     cmds = {c['name']: c for c in api('GET', '/command')}
-    check('в меню «/» есть /fix /tests /explain /commit /agents /chisle /remember /handoff /memory-check /vault и встроенные /review /init', all(n in cmds for n in ('fix', 'tests', 'explain', 'commit', 'agents', 'chisle', 'remember', 'handoff', 'memory-check', 'vault', 'review', 'init')), str(sorted(cmds)))
+    check('в меню «/» есть /fix /tests /explain /commit /agents /chisle /remember /handoff /memory-check /memory-auto /vault и встроенные /review /init', all(n in cmds for n in ('fix', 'tests', 'explain', 'commit', 'agents', 'chisle', 'remember', 'handoff', 'memory-check', 'memory-auto', 'vault', 'review', 'init')), str(sorted(cmds)))
     check('описание команды по-русски', 'тест' in cmds.get('fix', {}).get('description', ''), str(cmds.get('fix')))
     cfg = api('GET', '/config')
     check('модель по умолчанию — первая из списка шлюза (своя fake/m не применена)', cfg.get('model') == 'codary/glm-5.3', str(cfg.get('model')))
@@ -93,6 +93,25 @@ try:
     check('инструмент memory сохранил заметку (шапка Obsidian, теги, тип)', 'type: decision' in note_txt and 'tags: [тест]' in note_txt and 'Факт для теста' in note_txt, note_txt[:200])
     idx_txt = open(PROJ + '/.codary/index.md', encoding='utf8').read()
     check('оглавление перестроено и сохранило текст пользователя', 'МАРКЕР-ПАМЯТИ-42' in idx_txt and '[[проверка-памяти]] — проверочная заметка' in idx_txt, idx_txt[-300:])
+    # фоновое подведение итогов: после двух реплик и паузы куратор на дешёвой модели с одним инструментом memory сам сохраняет заметку
+    def ask(sid_, text_): api('POST', f'/session/{sid_}/message', {'model': {'providerID': 'codary', 'modelID': 'glm-5.3'}, 'parts': [{'type': 'text', 'text': text_}]}, timeout=90)
+    cs = api('POST', '/session', {'title': 'обсуждение'})['id']
+    ask(cs, 'Мы решили хранить деньги в микрорублях.'); ask(cs, 'И не забыть: Beget рвёт соединение MySQL после долгих вызовов.')
+    api('POST', '/_tool', {'name': 'memory', 'args': {'action': 'save', 'note': 'Итоги куратора', 'text': 'Деньги храним в микрорублях.', 'type': 'decision', 'summary': 'микрорубли'}}, port=GW)
+    wait(lambda: os.path.exists(PROJ + '/.codary/notes/итоги-куратора.md'), 45)
+    cur_calls = [c for c in api('GET', '/_calls', port=GW) if c['path'] == '/v1/chat/completions' and [n for n, _ in c.get('tools', [])] == ['memory']]
+    check('куратор сохранил заметку сам после паузы в разговоре', os.path.exists(PROJ + '/.codary/notes/итоги-куратора.md'), str(len(cur_calls)))
+    check('куратор работает на дешёвой модели и только с инструментом memory', bool(cur_calls) and cur_calls[0]['model'] != 'glm-5.3', str(cur_calls[:1])[:200])
+    check('в запрос куратора попал разговор, а секреты скрыты', bool(cur_calls) and 'микрорублях' in cur_calls[0].get('user_text', ''), '')
+    kids = [s for s in api('GET', '/session') if s.get('parentID') == cs]
+    check('сеанс куратора дочерний и архивирован (в списке чатов не виден)', bool(kids) and all(k.get('time', {}).get('archived') for k in kids), str(kids)[:200])
+    # выключатель
+    flag_auto = os.path.join(T, 'data', 'opencode', 'codary', 'memory-auto-off'); open(flag_auto, 'w').write('off\n')
+    cs2 = api('POST', '/session', {'title': 'второй разговор'})['id']; before = len(cur_calls)
+    ask(cs2, 'Ещё одно решение: ключи шифруем AES-GCM.'); ask(cs2, 'И ещё одно: копии базы на Netcup.'); time.sleep(8)
+    after = len([c for c in api('GET', '/_calls', port=GW) if c['path'] == '/v1/chat/completions' and [n for n, _ in c.get('tools', [])] == ['memory']])
+    check('выключатель /memory-auto off: куратор не запускается', after == before, f'{before} -> {after}')
+    os.remove(flag_auto)
     # отказ поставщика по балансу приходит кодом 424 — приложение не должно повторять запрос, а 5xx оно повторяет (так и задумано для сбоев сети)
     def chat_calls(): return len([c for c in api('GET', '/_calls', port=GW) if c['path'] == '/v1/chat/completions'])
     def timed_message(session_id, seconds):

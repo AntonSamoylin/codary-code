@@ -19,7 +19,7 @@ type Card = {
   free?: boolean
   pricing?: { prompt?: number; completion?: number }
 }
-let cache: { token: string; at: number; models: Record<string, unknown>; first?: string } | undefined
+let cache: { token: string; at: number; models: Record<string, unknown>; first?: string; cards: Card[] } | undefined
 
 const apiBase = () => (process.env.CODARY_API_URL ?? "https://api.codary.ru").replace(/\/+$/, "")
 const platform = () => process.env.CODARY_APP_PLATFORM ?? (process.platform === "darwin" ? "mac" : process.platform === "win32" ? "win" : "linux")
@@ -69,13 +69,15 @@ async function loadModels(token: string) {
     if (!response.ok) return cache?.token === token ? cache : undefined
     const data = (await response.json()) as { data?: Card[] }
     const models: Record<string, unknown> = {}
+    const cards: Card[] = []
     let first: string | undefined
     for (const card of data.data ?? []) {
       if (!card.id || card.type === "image") continue // картинки — не модели чата
       models[card.id] = toModel(card)
+      cards.push(card)
       first ??= card.id
     }
-    cache = { token, at: Date.now(), models, first }
+    cache = { token, at: Date.now(), models, first, cards }
     return cache
   } catch {
     return cache?.token === token ? cache : undefined
@@ -149,6 +151,12 @@ const COMMANDS: Record<string, { description: string; template: string }> = {
       "Вызови memory с action check для проекта и затем для scope user. Кратко перескажи найденное и предложи, что поправить (битые ссылки, дубликаты, устаревшие заметки, опечатки в тегах); " +
       "ничего не меняй, пока пользователь не согласится. $ARGUMENTS",
   },
+  "memory-auto": {
+    description: "фоновое подведение итогов чатов: on / off",
+    template:
+      "Вызови инструмент memory с action auto: если ниже написано off, выкл или выключить — с switch off; если on, вкл или включить — с switch on; иначе — с switch status. " +
+      "Ответь одной короткой строкой, что получилось. $ARGUMENTS",
+  },
   vault: {
     description: "открыть память как хранилище Obsidian",
     template:
@@ -172,4 +180,21 @@ const COMMANDS: Record<string, { description: string; template: string }> = {
 export function codaryCommands(config: any) {
   config.command ??= {}
   for (const [name, command] of Object.entries(COMMANDS)) config.command[name] ??= command
+}
+
+// Дешёвая модель для фоновой работы (подведение итогов чатов): сначала проверенные небольшие модели, иначе самая дешёвая по цене из списка аккаунта.
+const CHEAP_PREFERRED = ["glm-4.5-air", "glm-4.7-flash", "glm-5.3-flash", "glm-4.5-flash"]
+export async function cheapModel(): Promise<{ providerID: string; modelID: string } | undefined> {
+  const token = await readToken()
+  const loaded = token ? await loadModels(token) : undefined
+  const cards = loaded?.cards ?? []
+  if (!cards.length) return undefined
+  const price = (c: Card) => (c.free ? 0 : (c.pricing?.prompt ?? 0) + 3 * (c.pricing?.completion ?? 0))
+  const cheapest = Math.min(...cards.map(price))
+  for (const want of CHEAP_PREFERRED) {
+    const hit = cards.find((c) => c.id === want || c.id?.endsWith("/" + want))
+    if (hit && price(hit) <= Math.max(cheapest * 3, 60)) return { providerID: PROVIDER_ID, modelID: hit.id! }   // небольшая модель, но не втридорога относительно самой дешёвой
+  }
+  const best = [...cards].sort((a, b) => price(a) - price(b))[0]
+  return best?.id ? { providerID: PROVIDER_ID, modelID: best.id } : undefined
 }

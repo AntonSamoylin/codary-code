@@ -3,7 +3,7 @@
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2"
 import { ServerAuth } from "@/server/auth"
 
-export type BusEvent = { type: string; properties: any }
+export type BusEvent = { type: string; properties: any; directory?: string }
 
 export const shared = {
   started: false,
@@ -42,7 +42,7 @@ export function emit(event: BusEvent) {
 // таймеры «неудерживающие»: если больше ничего не работает (например, разовый запуск из консоли), процесс спокойно завершается
 export const sleep = (ms: number) => new Promise<void>((r) => void setTimeout(r, ms).unref?.())
 
-function textOf(parts: any[] | undefined): string {
+export function textOf(parts: any[] | undefined): string {
   return (parts ?? [])
     .filter((p) => p?.type === "text" && typeof p.text === "string" && !p.synthetic)
     .map((p) => p.text)
@@ -62,6 +62,7 @@ export async function runSession(input: {
   text: string
   agent: string
   timeoutMs: number
+  model?: { providerID: string; modelID: string }
 }): Promise<RunResult> {
   const client = await clientFor(input.directory)
   shared.sessionDirs.set(input.sessionID, input.directory)
@@ -98,6 +99,7 @@ export async function runSession(input: {
       sessionID: input.sessionID,
       directory: input.directory,
       agent: input.agent,
+      ...(input.model ? { model: input.model } : {}),
       parts: [{ type: "text", text: input.text }],
     })
     if (sent?.error) return { status: "error", text: `Не удалось отправить запрос: ${JSON.stringify(sent.error).slice(0, 300)}` }

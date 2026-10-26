@@ -7,6 +7,7 @@ import { tools } from "./tools"
 import { codaryCommands, codaryConfig } from "./account"
 import { CHISLE_RULES, chisleEnabled } from "./chisle"
 import { MEMORY_RULES, codaryMemory } from "./memory"
+import { startCurator } from "./curator"
 
 export async function CodaryPlugin(input: PluginInput): Promise<Hooks> {
   if (process.env.CODARY_DISABLE_PLUGIN) return {}
@@ -14,6 +15,7 @@ export async function CodaryPlugin(input: PluginInput): Promise<Hooks> {
     shared.started = true
     shared.defaultDirectory = input.directory
     startScheduler()
+    startCurator()
     startTelegram()
   }
   return {
@@ -27,6 +29,6 @@ export async function CodaryPlugin(input: PluginInput): Promise<Hooks> {
       output.system.push(MEMORY_RULES)
       if (await chisleEnabled()) output.system.push(CHISLE_RULES)
     },
-    event: async ({ event }) => emit({ type: event.type, properties: (event as any).properties }),
+    event: async ({ event }) => emit({ type: event.type, properties: (event as any).properties, directory: input.directory }),
   }
 }

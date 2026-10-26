@@ -3,7 +3,7 @@ import { expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { appendDaily, backlinks, checkMemory, findSecret, listNotes, parseNote, readNote, reindex, saveNote, searchNotes, slugify } from "../plugins/codary/memory-store"
+import { appendDaily, backlinks, buildTranscript, checkMemory, findSecret, listNotes, parseNote, readNote, reindex, saveNote, searchNotes, slugify } from "../plugins/codary/memory-store"
 
 const tmp = async () => fs.mkdtemp(path.join(os.tmpdir(), "codary-mem-"))
 
@@ -105,4 +105,19 @@ test("журнал дня дописывается, секреты не пишу
   const txt = await fs.readFile(path.join(root, "daily", f), "utf8")
   expect(txt.match(/^- \d\d:\d\d /gm)?.length).toBe(2)
   expect(await appendDaily(root, "токен: ghp_" + "a".repeat(36))).toContain("Не записано")
+})
+
+test("разговор для куратора: секреты скрыты, длинное режется, системные части и инструменты не мешают", () => {
+  const msg = (role: string, text: string, extra: any[] = []) => ({ info: { role }, parts: [{ type: "text", text }, ...extra] })
+  const out = buildTranscript([
+    msg("user", "Мой ключ sk-abcdefghijklmnop12345 и password = hunter2hunter2, решили хранить в SQLite"),
+    msg("assistant", "Ок, использую SQLite.", [{ type: "tool", tool: "bash" }, { type: "tool", tool: "bash" }, { type: "tool", tool: "edit" }]),
+    { info: { role: "assistant" }, parts: [{ type: "text", text: "служебное", synthetic: true }] },
+  ])
+  expect(out).not.toContain("sk-abcdefghijklmnop12345")
+  expect(out).not.toContain("hunter2hunter2")
+  expect(out).toContain("[скрыто]") && expect(out).toContain("SQLite")
+  expect(out).toContain("(инструменты: bash, edit)") && expect(out).not.toContain("служебное")
+  const long = buildTranscript(Array.from({ length: 40 }, (_, i) => msg("user", `Реплика ${i} ` + "я".repeat(1400))), 5000)
+  expect(long.length).toBeLessThan(5100) && expect(long).toContain("середина разговора пропущена") && expect(long).toContain("Реплика 39")
 })

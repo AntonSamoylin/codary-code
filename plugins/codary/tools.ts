@@ -6,6 +6,7 @@ import { describe, fmt, nextRunAfter, validateSpec } from "./time"
 import { enqueue } from "./scheduler"
 import { chisleEnabled, setChisle } from "./chisle"
 import { spawn } from "node:child_process"
+import { autoStatus, setAuto } from "./curator"
 import { appendDaily, checkMemory, readNote, reindex, rootOf, saveNote, searchNotes, TYPES } from "./memory-store"
 
 const z = tool.schema
@@ -19,10 +20,10 @@ export const tools = {
   memory: tool({
     description:
       "Long-term memory as Obsidian-compatible markdown notes (frontmatter, [[wikilinks]], #tags). scope=project: <project>/.codary/ (decisions, how-tos, gotchas, agreements); scope=user: ~/.codary/ (the user's preferences and facts, shared by all projects). " +
-      "Actions: save (one idea per note; existing notes are appended to unless mode=replace, which keeps a copy), read, search (query and/or tags), daily (append a line to today's journal), check (broken links, duplicates, stale notes, tag typos, secrets), open (open the folder as an Obsidian vault). " +
+      "Actions: save (one idea per note; existing notes are appended to unless mode=replace, which keeps a copy), read, search (query and/or tags), daily (append a line to today's journal), check (broken links, duplicates, stale notes, tag typos, secrets), open (open the folder as an Obsidian vault), auto (switch the background chat summarizer on/off/status; use only when the user asks). " +
       "Never store passwords, keys, tokens or personal data. Search or read before relying on memory; keep summaries to one line.",
     args: {
-      action: z.enum(["save", "read", "search", "daily", "check", "open"]).describe("What to do"),
+      action: z.enum(["save", "read", "search", "daily", "check", "open", "auto"]).describe("What to do"),
       scope: z.enum(["project", "user"]).optional().describe("project (default) or user"),
       note: z.string().optional().describe("save/read: note title or name"),
       text: z.string().max(20000).optional().describe("save/daily: note text (markdown, may contain [[links]]); for save only the new content"),
@@ -31,6 +32,7 @@ export const tools = {
       tags: z.array(z.string()).optional().describe("save/search: tags without #"),
       mode: z.enum(["append", "replace"]).optional().describe("save: append (default for existing notes) or replace (old version is kept in .trash)"),
       query: z.string().optional().describe("search: words to look for"),
+      switch: z.enum(["on", "off", "status"]).optional().describe("auto: on, off or status"),
     },
     async execute(args, ctx) {
       const scope = args.scope ?? "project"
@@ -49,6 +51,11 @@ export const tools = {
           return args.text ? await appendDaily(root, args.text) : "Для daily нужен text."
         case "check":
           return await checkMemory(root)
+        case "auto": {
+          if (args.switch === "on") await setAuto(true)
+          if (args.switch === "off") await setAuto(false)
+          return await autoStatus()
+        }
         case "open": {
           await reindex(root, label)
           const uri = `obsidian://open?path=${encodeURIComponent(root)}`

@@ -140,6 +140,8 @@ const SECRET_PATTERNS: [RegExp, string][] = [
   [/\bgh[pousr]_[A-Za-z0-9]{30,}\b/, "токен GitHub"],
 ]
 export const findSecret = (text: string) => SECRET_PATTERNS.find(([re]) => re.test(text))?.[1]
+/** Скрывает секреты в тексте, который уходит на подведение итогов. */
+export const redact = (text: string) => SECRET_PATTERNS.reduce((s, [re]) => s.replace(new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g"), "[скрыто]"), text)
 
 // ---- чтение и запись ---------------------------------------------------------------------------------------------------------
 export async function listNotes(root: string): Promise<Note[]> {
@@ -370,4 +372,27 @@ export async function checkMemory(root: string, now = new Date()) {
   }
   const head = `Проверено заметок: ${notes.length}. Оглавление пересобрано.`
   return out.length ? `${head}\nНайдено (${out.length}):\n${out.slice(0, 40).map((x) => "- " + x).join("\n")}${out.length > 40 ? `\n…и ещё ${out.length - 40}` : ""}` : `${head}\nПроблем не найдено.`
+}
+
+// ---- разговор для куратора ----------------------------------------------------------------------------------------------------
+const textOfParts = (parts: any[] | undefined) =>
+  (parts ?? []).filter((p) => p?.type === "text" && typeof p.text === "string" && !p.synthetic).map((p) => p.text).join("\n").trim()
+const clipText = (t: string, n: number) => (t.length > n ? t.slice(0, n) + "…" : t)
+
+/** Сжатый текст разговора для подведения итогов: реплики пользователя и ответы агента (длинное режем, из середины выкидываем), секреты скрыты. */
+export function buildTranscript(msgs: any[], max = 14_000) {
+  const lines: string[] = []
+  for (const m of msgs) {
+    const text = textOfParts(m.parts)
+    if (m.info?.role === "user") {
+      if (text) lines.push(`Пользователь: ${clipText(text, 1500)}`)
+    } else if (m.info?.role === "assistant") {
+      const tools = [...new Set((m.parts ?? []).filter((p: any) => p?.type === "tool").map((p: any) => p.tool))]
+      const bits = [text && clipText(text, 1200), tools.length && `(инструменты: ${tools.join(", ")})`].filter(Boolean)
+      if (bits.length) lines.push(`Агент: ${bits.join(" ")}`)
+    }
+  }
+  let out = lines.join("\n\n")
+  if (out.length > max) out = out.slice(0, 3000) + "\n\n…(середина разговора пропущена)…\n\n" + out.slice(-(max - 3000))
+  return redact(out)
 }
