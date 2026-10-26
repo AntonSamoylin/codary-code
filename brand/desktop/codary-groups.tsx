@@ -45,6 +45,13 @@ const moveSession = (sessionID: string, groupID: string | null) =>
   })
 const togglePin = (sessionID: string) =>
   update((s) => ({ ...s, pinned: s.pinned.includes(sessionID) ? s.pinned.filter((id) => id !== sessionID) : [sessionID, ...s.pinned] }))
+/** Чат удалён: убираем его из групп и закреплённых. */
+const forgetSession = (sessionID: string) =>
+  update((s) => {
+    const assign = { ...s.assign }
+    delete assign[sessionID]
+    return { ...s, assign, pinned: s.pinned.filter((id) => id !== sessionID) }
+  })
 const addGroup = (name: string) => {
   const id = newId()
   update((s) => ({ ...s, groups: [...s.groups, { id, name: name.trim().slice(0, 40) }] }))
@@ -259,7 +266,7 @@ export function CodaryRowBadge(props: { sessionID: string }) {
 }
 
 /** Кнопка «⋯» у строки чата: закрепить, перенести в группу, создать группу. */
-export function CodaryRowMenu(props: { sessionID: string }) {
+export function CodaryRowMenu(props: { sessionID: string; title?: string; onDelete?: () => void | Promise<void> }) {
   const [anchor, setAnchor] = createSignal<HTMLElement | null>(null)
   const [creating, setCreating] = createSignal(false)
   const current = () => state().assign[props.sessionID]
@@ -281,7 +288,7 @@ export function CodaryRowMenu(props: { sessionID: string }) {
         ⋯
       </button>
       <Show when={anchor()}>
-        <Menu anchor={anchor()!} onClose={close} size={state().groups.length + 4}>
+        <Menu anchor={anchor()!} onClose={close} size={state().groups.length + (props.onDelete ? 6 : 4)}>
           <button class={menuItem} onClick={() => (togglePin(props.sessionID), close())}>
             {state().pinned.includes(props.sessionID) ? "Открепить" : "Закрепить наверху"}
           </button>
@@ -317,6 +324,23 @@ export function CodaryRowMenu(props: { sessionID: string }) {
                 }}
               />
             </div>
+          </Show>
+          <Show when={props.onDelete}>
+            <div class="my-1 h-px bg-v2-border-border-muted" />
+            <button
+              class={menuItem}
+              style={{ color: "#d33" }}
+              onClick={async () => {
+                close()
+                if (!window.confirm(`Удалить чат «${props.title || "без названия"}»? Его нельзя будет восстановить.`)) return
+                try {
+                  await props.onDelete?.()
+                  forgetSession(props.sessionID)
+                } catch {}
+              }}
+            >
+              Удалить чат…
+            </button>
           </Show>
         </Menu>
       </Show>

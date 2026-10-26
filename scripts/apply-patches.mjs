@@ -405,6 +405,7 @@ copyFileSync(join(BRAND, 'desktop', 'codary-groups.tsx'), p('packages/app/src/co
 edit('packages/app/src/pages/home/home-sessions-view.tsx', [
   ['import { type Accessor, createMemo, For, Show, Suspense } from "solid-js"\n',
    'import { type Accessor, createEffect, createMemo, For, Show, Suspense } from "solid-js"\nimport { CodaryEmptyGroup, CodaryGroupBar, CodaryRowBadge, CodaryRowMenu, codaryFilter, codaryNoteCreate, codaryTrack } from "@/components/codary-groups"\n'],
+  ['  onArchiveSession: (session: Session) => Promise<void>\n', '  onArchiveSession: (session: Session) => Promise<void>\n  onDeleteSession: (session: Session) => Promise<void>\n'],
   ['export function HomeSessionsView(props: HomeSessionsViewProps) {\n  return (\n',
    'export function HomeSessionsView(props: HomeSessionsViewProps) {\n  const shown = createMemo(() => codaryFilter(props.groups()))\n  createEffect(() => codaryTrack(props.groups()))\n  return (\n'],
   ['                onClick={props.onCreateSession}\n              >\n                {props.language.t("command.session.new")}',
@@ -417,7 +418,44 @@ edit('packages/app/src/pages/home/home-sessions-view.tsx', [
   ['        <HomeSessionTitle title={title()} showProjectName={!!showProjectName()} />\n',
    '        <HomeSessionTitle title={title()} showProjectName={!!showProjectName()} />\n        <CodaryRowBadge sessionID={props.record.session.id} />\n'],
   ['      <Show when={SHOW_HOME_SESSION_ARCHIVE}>\n        <div\n          class={`\n            hover-reveal absolute right-1.5',
-   '      <CodaryRowMenu sessionID={props.record.session.id} />\n      <Show when={SHOW_HOME_SESSION_ARCHIVE}>\n        <div\n          class={`\n            hover-reveal absolute right-1.5'],
+   '      <CodaryRowMenu sessionID={props.record.session.id} title={title()} onDelete={() => props.onDeleteSession(props.record.session)} />\n      <Show when={SHOW_HOME_SESSION_ARCHIVE}>\n        <div\n          class={`\n            hover-reveal absolute right-1.5'],
+])
+
+// удаление чата с главного экрана (меню «⋯» у чата): то же, что архивация, но вызывает session.delete и закрывает открытые вкладки чата
+edit('packages/app/src/pages/home/home-sessions.tsx', [
+  ['      onArchiveSession={props.sessions.session.archive}\n', '      onArchiveSession={props.sessions.session.archive}\n      onDeleteSession={props.sessions.session.delete}\n'],
+])
+edit('packages/app/src/pages/home/home-sessions-controller.tsx', [
+  ['      },\n    },\n    tab: {\n      isOpen:', `      },
+      delete: async (session: Session) => {
+        const conn = home.server.focused()
+        const ctx = home.server.focusedContext()
+        if (!conn || !ctx) return
+        const [, setStore] = ctx.sync.child(session.directory)
+        if ((await ctx.sdk.protocol) !== "v1") return
+        await archiveHomeSession({
+          server: ServerConnection.key(conn),
+          session,
+          archive: (sessionID) => ctx.sdk.client.session.delete({ sessionID, directory: session.directory }),
+          remove: () => {
+            setStore(
+              produce((draft) => {
+                const match = Binary.search(draft.session, session.id, (item) => item.id)
+                if (match.found) draft.session.splice(match.index, 1)
+              }),
+            )
+            homeSessions().remove(session.id)
+          },
+          onError: (cause) =>
+            showToast({
+              title: language.t("common.requestFailed"),
+              description: errorMessage(cause, language.t("common.requestFailed")),
+            }),
+        })
+      },
+    },
+    tab: {
+      isOpen:`],
 ])
 
 // ---------------------------------------------------------------- переводы: «OpenCode» -> «Codary Code» (только в словарях строк)
