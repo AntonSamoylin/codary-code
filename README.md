@@ -56,6 +56,14 @@
 Пароли, ключи и токены не сохраняются. Команды: `/remember`, `/handoff`, `/memory-check`, `/vault`, `/memory-auto on|off`.
 **Фоновое подведение итогов** (`plugins/codary/curator.ts`): когда чат затих на 45 с и в нём не меньше двух реплик, дочерний сеанс «🧠 Память» на самой дешёвой подходящей модели аккаунта читает разговор (секреты скрыты) и сам сохраняет важное инструментом `memory`; не больше 20 разборов в сутки, повторно — только после новых реплик, сеанс архивируется и в списке чатов не виден. Выключатель: `/memory-auto off` или `CODARY_MEMORY_AUTO=0`. Проверка логики: `bun test tests/memory.test.ts`, на настоящем сервере — `tests/service.py`.
 
+## Подпись и нотаризация Mac (Apple Developer ID)
+
+Без неё macOS показывает окно «Apple не удалось подтвердить…» для скачанного браузером приложения. Обычная сборка (`./scripts/build-mac.sh arm64`) подписывает ad-hoc и окно по-прежнему возможно; подписанная сборка:
+1. Платная программа Apple Developer (99 $ в год), сертификат «Developer ID Application» (Xcode ▸ Settings ▸ Accounts ▸ Manage Certificates ▸ «+»).
+2. Пароль приложения (appleid.apple.com ▸ Пароли приложений) и профиль: `xcrun notarytool store-credentials codary-notary --apple-id <Apple ID> --team-id <TEAM ID>` (пароль вводится в запрос и лежит только в связке ключей).
+3. `./scripts/sign-check.sh` — покажет, что ещё не готово. Когда всё ✓: `CODARY_SIGN=1 ./scripts/build-mac.sh arm64` (и `x64`); нотаризация добавляет 2–15 минут. С `scripts/release-local.sh` флаг тоже работает (окружение передаётся в сборку).
+В режиме `CODARY_SIGN=1` подписывает electron-builder (hardened runtime, `resources/entitlements.plist`), хук `brand/desktop/codary-notarize.cjs` после подписи отправляет приложение в Apple, ждёт и «подшивает» билет, затем скрипт проверяет `spctl` («Notarized Developer ID») и нотаризует сам dmg. Если сертификата нет, сборка остановится сразу с понятным сообщением. Проверено: подключение хука (сборка без сертификата падает на нём с понятной ошибкой), запуск приложения под hardened runtime с нашими entitlements (ad-hoc + runtime). Не проверено без сертификата: сама подпись Developer ID и ответ Apple.
+
 ## Сборка
 
 В GitHub: **Actions → build → Run workflow** (флажок «release» создаёт релиз с установщиками). Либо опубликуйте тег

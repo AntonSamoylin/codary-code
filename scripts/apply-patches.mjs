@@ -15,6 +15,8 @@ const OWNER = process.env.CODARY_GH_OWNER || 'codary-ru'
 const REPO = 'codary-code'
 const VERSION = process.env.CODARY_VERSION || JSON.parse(readFileSync(join(ROOT, 'version.json'), 'utf8')).version
 const SITE = 'https://codary.ru'
+// CODARY_SIGN=1 — сборка Mac с подписью Developer ID и нотаризацией (нужны сертификат и профиль notarytool, см. scripts/sign-check.sh); без флага — ad-hoc подпись, как раньше
+const SIGN = process.env.CODARY_SIGN === '1'
 const NAME = 'Codary Code'
 let failed = 0
 
@@ -53,11 +55,14 @@ edit('packages/desktop/electron-builder.config.ts', [
   ['publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },', `publish: { provider: "github", owner: "${OWNER}", repo: "${REPO}", channel: "latest" },`],
   // подписи и нотаризация нам недоступны (нет сертификатов): Mac подписывается ad-hoc, Windows — без подписи
   ['notarize: true,', 'notarize: false,'],
-  ['dmg: {\n    sign: true,\n  },', 'dmg: {\n    sign: false,\n  },'],
+  ...(SIGN ? [] : [['dmg: {\n    sign: true,\n  },', 'dmg: {\n    sign: false,\n  },']]),
   ['async function signWindows(configuration: { path: string }) {\n', 'async function signWindows(configuration: { path: string }) {\n  return // без сертификата: подпись Windows отключена\n'],
-  ['category: "public.app-category.developer-tools",', 'category: "public.app-category.developer-tools",\n    identity: null,'],
-  // без идентификатора разработчика собираем ad-hoc подпись сами: иначе macOS считает скачанный пакет «повреждённым»
-  ['  mac: {\n    category:', '  afterPack: async (context) => {\n    if (context.electronPlatformName !== "darwin") return\n    const bundle = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)\n    await execFileAsync("codesign", ["--force", "--deep", "--sign", "-", bundle])\n  },\n  mac: {\n    category:'],
+  ...(SIGN ? [] : [['category: "public.app-category.developer-tools",', 'category: "public.app-category.developer-tools",\n    identity: null,']]),
+  // без идентификатора разработчика собираем ad-hoc подпись сами: иначе macOS считает скачанный пакет «повреждённым»;
+  // с CODARY_SIGN=1 подписывает electron-builder (Developer ID, hardened runtime, entitlements из resources/), а хук после подписи нотаризует и «подшивает» билет
+  ...(SIGN
+    ? [['  mac: {\n    category:', '  afterSign: path.join(packageDir, "scripts", "codary-notarize.cjs"),\n  mac: {\n    category:']]
+    : [['  mac: {\n    category:', '  afterPack: async (context) => {\n    if (context.electronPlatformName !== "darwin") return\n    const bundle = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)\n    await execFileAsync("codesign", ["--force", "--deep", "--sign", "-", bundle])\n  },\n  mac: {\n    category:']]),
   // тексты лицензии и уведомление о происхождении кода — рядом с приложением
   ['{\n      from: "native/",', '{\n      from: "resources/legal/",\n      to: "legal/",\n    },\n    {\n      from: "native/",'],
 ])
@@ -391,6 +396,10 @@ edit('packages/app/src/components/dialog-manage-models.tsx', [
   ['      action={\n        <Button class="h-7 -my-1 text-14-medium" icon="plus-small" tabIndex={-1} onClick={handleConnectProvider}>\n          {language.t("command.provider.connect")}\n        </Button>\n      }\n', ''],
   ['        <ButtonV2 variant="neutral" icon="plus" onClick={handleConnectProvider}>\n          {language.t("command.provider.connect")}\n        </ButtonV2>\n', ''],
 ])
+
+// хук нотаризации (только для CODARY_SIGN=1 подключается в electron-builder.config.ts)
+copyFileSync(join(BRAND, 'desktop', 'codary-notarize.cjs'), p('packages/desktop/scripts/codary-notarize.cjs'))
+console.log(`✓ подпись Mac: ${SIGN ? 'Developer ID + нотаризация (CODARY_SIGN=1)' : 'ad-hoc'}`)
 
 // ---------------------------------------------------------------- стартовые подсказки на пустом экране нового сеанса, уведомления об ошибках по умолчанию
 copyFileSync(join(BRAND, 'desktop', 'codary-starters.tsx'), p('packages/app/src/components/codary-starters.tsx'))
